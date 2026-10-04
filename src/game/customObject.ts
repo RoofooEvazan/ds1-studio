@@ -35,12 +35,16 @@ export function gameRows(doc: TxtTableDoc): number[] {
   return out;
 }
 
-/** The objects.txt row (game numbering) a DS1 object id resolves to in an act (0-based), ids spilling into neighbours. */
+/**
+ * The objects.txt row (game numbering) a DS1 object id resolves to in an act (0-based). An id of 150 or more is the row
+ * id - 150 directly (D2Common, D2MOO DrlgPreset.cpp); a lower one goes through the act's table, negative ids reaching
+ * back into earlier acts'.
+ */
 export function presetRow(presets: Int32Array[], act0: number, id: number): number {
+  if (id >= OBJECTS_PER_ACT) return id - OBJECTS_PER_ACT;
   let act = act0;
   let n = id;
   while (n < 0) (act--, (n += OBJECTS_PER_ACT));
-  while (n >= OBJECTS_PER_ACT) (act++, (n -= OBJECTS_PER_ACT));
   return presets[act]?.[n] ?? -1;
 }
 

@@ -41,10 +41,37 @@ class NativeFileAccess implements RandomAccess {
   }
 }
 
-async function looseData(label: string, root: string): Promise<LooseSource | null> {
+/** The folder each loose data source was listed from, so it can be listed again (refreshLooseFolders). */
+const looseRoots = new WeakMap<LooseSource, string>();
+
+async function looseFiles(root: string): Promise<Map<string, () => Promise<Uint8Array>>> {
   const files = await invoke<string[]>('list_data_files', { root });
-  if (!files.length) return null;
-  return new LooseSource(label, new Map(files.map((f) => [f, () => readFile(join(root, f))])));
+  return new Map(files.map((f) => [f, () => readFile(join(root, f))]));
+}
+
+async function looseData(label: string, root: string): Promise<LooseSource | null> {
+  const files = await looseFiles(root);
+  if (!files.size) return null;
+  const src = new LooseSource(label, files);
+  looseRoots.set(src, root);
+  return src;
+}
+
+/**
+ * Lists the loose data folders of `fs` again, so files added, changed or removed since it was loaded are seen (file
+ * contents are read when asked for, so only the lists go stale). Returns the paths now listed there.
+ */
+export async function refreshLooseFolders(fs: LayeredFs): Promise<string[]> {
+  const listed: string[] = [];
+  for (const s of fs.baseSources) {
+    const root = s instanceof LooseSource ? looseRoots.get(s) : undefined;
+    if (!root) continue;
+    const files = await looseFiles(root);
+    (s as LooseSource).replaceFiles(files);
+    listed.push(...files.keys());
+  }
+  fs.resetSession();
+  return listed;
 }
 
 async function exists(path: string): Promise<boolean> {

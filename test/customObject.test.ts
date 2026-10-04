@@ -27,10 +27,10 @@ describe('custom objects', () => {
     expect(gameRows(doc())).toEqual([0, 1, 3, 4]);
   });
 
-  it('resolves ids that spill into the next or previous act', () => {
+  it('resolves ids: 150+ as the objects.txt row, negative ones into earlier acts', () => {
     const presets = [Int32Array.from({ length: 150 }, (_, i) => i), Int32Array.from({ length: 150 }, (_, i) => 1000 + i)];
     expect(presetRow(presets, 0, 5)).toBe(5);
-    expect(presetRow(presets, 0, 155)).toBe(1005);
+    expect(presetRow(presets, 0, 155)).toBe(5); // 150+: the objects.txt row itself
     expect(presetRow(presets, 1, -145)).toBe(5);
   });
 

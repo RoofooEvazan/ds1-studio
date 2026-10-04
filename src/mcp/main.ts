@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { GameData } from '../game/GameData';
 import { renderMapImage } from '../render/exportImage';
-import { getConfig, loadFromTauri, tauriSaveTarget } from '../vfs/tauri';
+import { getConfig, loadFromTauri, refreshLooseFolders, tauriSaveTarget } from '../vfs/tauri';
 import { handleLine } from './protocol';
 import { McpSession, type SessionHost } from './session';
 
@@ -20,8 +20,8 @@ const toBase64 = (blob: Blob) =>
     r.readAsDataURL(blob);
   });
 
-const render: SessionHost['render'] = async (scene, objects, sprites, map, area, scale, withObjects) =>
-  toBase64(await renderMapImage(scene, objects, sprites, map.palette, map.ds1.width, map.ds1.height, { area, scale, objects: withObjects, visible: () => true, format: 'jpeg' }));
+const render: SessionHost['render'] = async (scene, objects, sprites, map, area, scale, withObjects, specials, overlay) =>
+  toBase64(await renderMapImage(scene, objects, sprites, map.palette, map.ds1.width, map.ds1.height, { area, scale, objects: withObjects, specials, overlay, visible: () => true, format: 'jpeg' }));
 
 export async function startMcp(): Promise<void> {
   // The game data loads on the first tool call (with the folders chosen in the app), so the handshake is instant.
@@ -31,7 +31,11 @@ export async function startMcp(): Promise<void> {
       const config = await getConfig();
       if (!config.gameDir) throw new Error('DS1 Studio has no Diablo II folder yet: open DS1 Studio once and choose your folders.');
       const gd = await GameData.load(await loadFromTauri(config));
-      return new McpSession(gd, { saveTarget: tauriSaveTarget(config), render });
+      // Files added, changed or removed in the mod folders while the server runs (by scripts, the editor…).
+      const refresh = async () => {
+        for (const p of await refreshLooseFolders(gd.fs)) if (/\.dt1$/i.test(p)) gd.forgetDt1(p);
+      };
+      return new McpSession(gd, { saveTarget: tauriSaveTarget(config), render, refresh });
     })().catch((e) => {
       loading = null;
       throw e;

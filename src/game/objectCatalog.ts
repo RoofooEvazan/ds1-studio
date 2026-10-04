@@ -111,20 +111,34 @@ export interface CatalogTables {
   superUniques: TxtTable | null;
 }
 
-export function buildCatalog(presets: Int32Array[] | null, t: CatalogTables): CatalogEntry[] {
-  const out: CatalogEntry[] = [];
-  // The game numbers objects.txt rows by position, without the "Expansion" divider (the Id column drifts after it).
-  const objRows = (t.objects?.rows ?? []).filter((r) => r['Name'] !== 'Expansion');
-  const objById = new Map(objRows.map((r, i) => [i, r]));
-  presets?.forEach((ids, a) =>
-    ids.forEach((row, id) => {
-      if (row <= 0) return; // unused slot (row 0 is objects.txt's "test data" dummy)
-      const r = objById.get(row);
-      if (!r) return void out.push({ act: a + 1, type: 2, id, name: `Object row ${row} (not in objects.txt)`, spec: null });
+export type ObjectRowEntry = Omit<CatalogEntry, 'act' | 'type' | 'id'>;
+
+/**
+ * Every objects.txt row by record number. The game numbers rows by position, without the "Expansion" divider (the
+ * Id column drifts after it). A DS1 object id of 150 or more names a row directly: row = id - 150.
+ */
+export function objectRowsByNumber(t: Pick<CatalogTables, 'objects'>): Map<number, ObjectRowEntry> {
+  const out = new Map<number, ObjectRowEntry>();
+  (t.objects?.rows ?? [])
+    .filter((r) => r['Name'] !== 'Expansion')
+    .forEach((r, row) => {
       const desc = r['description - not loaded'] || r['Name'] || `Object ${row}`;
       // A custom object goes by the name it was given there.
       const custom = desc.startsWith(CUSTOM_OBJECT_MARK) ? desc.slice(CUSTOM_OBJECT_MARK.length) : null;
-      out.push({ act: a + 1, type: 2, id, name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row });
+      out.set(row, { name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row });
+    });
+  return out;
+}
+
+export function buildCatalog(presets: Int32Array[] | null, t: CatalogTables): CatalogEntry[] {
+  const out: CatalogEntry[] = [];
+  const objByRow = objectRowsByNumber(t);
+  presets?.forEach((ids, a) =>
+    ids.forEach((row, id) => {
+      if (row <= 0) return; // unused slot (row 0 is objects.txt's "test data" dummy)
+      const r = objByRow.get(row);
+      if (!r) return void out.push({ act: a + 1, type: 2, id, name: `Object row ${row} (not in objects.txt)`, spec: null });
+      out.push({ act: a + 1, type: 2, id, ...r });
     }),
   );
 

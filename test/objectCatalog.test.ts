@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { buildCatalog, findObjectPresets, OBJECTS_PER_ACT, prettyName, PRESET_ACTS } from '../src/game/objectCatalog';
+import { buildCatalog, CUSTOM_OBJECT_MARK, findObjectPresets, objectRowsByNumber, OBJECTS_PER_ACT, prettyName, PRESET_ACTS } from '../src/game/objectCatalog';
 import type { TxtTable } from '../src/formats/txt';
 import { D2_DIR, hasD2 } from '../tools/testdata';
 
@@ -45,6 +45,19 @@ describe('object catalogue', () => {
     // Row 1 counts without the divider: the bonfire, lit (it loops in "ON").
     expect(fire.name).toBe('Rogue Bonfire (1)');
     expect(fire.spec).toMatchObject({ token: 'RB', mode: 'ON', cls: 'HTH', parts: { TR: 'LIT' } });
+  });
+
+  it('lists every objects.txt row by number (DS1 ids of 150+ name them directly), custom rows by their own name', () => {
+    const objects = table([
+      { Name: 'Dummy', 'description - not loaded': 'test', Token: '' },
+      { Name: 'Expansion', 'description - not loaded': '', Token: '' },
+      { Name: 'fire', 'description - not loaded': 'RogueBonfire', Token: 'RB', TR: '1' },
+      { Name: 'dummy', 'description - not loaded': `${CUSTOM_OBJECT_MARK}Lantern`, Token: 'zz', TR: '1' },
+    ]);
+    const rows = objectRowsByNumber({ objects });
+    expect(rows.get(1)).toMatchObject({ name: 'Rogue Bonfire (1)', row: 1 });
+    expect(rows.get(2)?.name).toBe('Lantern (custom, 2)');
+    expect(rows.has(3)).toBe(false);
   });
 
   it('names NPCs from MonPreset / MonStats / SuperUniques, and shows spawn spots as their monster', () => {

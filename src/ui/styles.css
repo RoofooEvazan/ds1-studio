@@ -769,6 +769,7 @@ kbd { display: inline-block; min-width: 22px; padding: 2px 7px; font: 600 11px/1
 /* Walkability mode's legend: in the panel, and floating over the map's top-left corner. */
 .walk-legend { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 8px; font-size: 11.5px; }
 .walk-legend.floating { position: absolute; left: 10px; top: 10px; margin: 0; padding: 8px 10px; background: rgba(8, 9, 12, 0.85); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5); pointer-events: none; z-index: 5; max-width: 250px; }
+.walk-legend.floating.overview-legend { left: auto; right: 10px; max-width: 320px; }
 .walk-legend-title { font-weight: 600; margin-bottom: 2px; }
 .walk-legend-row { display: flex; align-items: center; gap: 8px; }
 .walk-legend-swatch { width: 20px; height: 10px; flex: none; }

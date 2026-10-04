@@ -127,13 +127,18 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Objects of another act: the game reads a DS1 object's id in its act's table and runs on into the neighbouring
-  // acts' (150 objects per act), so an Act 5 map places Act 1's object 0 as id -600, as WinDS1 maps do.
+  // Objects of another act. An id below 150 is read in the map's act table and runs back into earlier acts' (150
+  // objects per act), so an Act 5 map places Act 1's object 0 as id -600, as WinDS1 maps do. An id of 150 or more
+  // is an objects.txt row (id - 150), which is how a later act's object is placed.
   const [fromAct, setFromAct] = useState(act);
   useEffect(() => setFromAct(act), [act]);
   const shift = (fromAct - act) * OBJECTS_PER_ACT;
   const all = useMemo(
-    () => gd.objectList(fromAct).filter((o) => fromAct === act || o.type === 2).map((o) => ({ ...o, id: o.id + (o.type === 2 ? shift : 0), own: o.id })),
+    () =>
+      gd
+        .objectList(fromAct)
+        .filter((o) => fromAct === act || (o.type === 2 && (fromAct < act || o.row !== undefined)))
+        .map((o) => ({ ...o, id: o.type !== 2 || fromAct === act ? o.id : fromAct < act ? o.id + shift : OBJECTS_PER_ACT + o.row!, own: o.id })),
     [gd, act, fromAct, shift],
   );
   const items = useMemo(() => {
@@ -155,7 +160,7 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
             </button>
           ))}
         </div>
-        <label className="small og-act" title="Objects of another act, placed with the id that reaches them from this map's act (negative for earlier acts, e.g. -600 for Act 1's object 0 in an Act 5 map). NPCs only come from the map's own act.">
+        <label className="small og-act" title="Objects of another act, placed with the id that reaches them from this map's act (negative for earlier acts, e.g. -600 for Act 1's object 0 in an Act 5 map; 150 + the objects.txt row for later acts). NPCs only come from the map's own act.">
           Act{' '}
           <select value={fromAct} onChange={(e) => setFromAct(Number(e.target.value))}>
             {[0, 1, 2, 3, 4].map((a) => (

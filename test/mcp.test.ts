@@ -39,6 +39,29 @@ describe('MCP list_maps', () => {
   });
 });
 
+describe('MCP file list and errors', () => {
+  it('lists the mod folders again before looking up files, and reports native errors by their message', async () => {
+    const { LooseSource } = await import('../src/vfs/vfs');
+    const files = new Map<string, () => Promise<Uint8Array>>([['data/global/tiles/act1/a.ds1', () => Promise.reject('The system cannot find the file specified. (os error 2)')]]);
+    const src = new LooseSource('mod', files);
+    const fs = new LayeredFs([src]);
+    let refreshed = 0;
+    const s = new McpSession({ fs } as unknown as GameData, {
+      saveTarget: null,
+      refresh: async () => {
+        refreshed++;
+        src.replaceFiles(new Map([...files, ['data/global/tiles/act1/b.ds1', async () => new Uint8Array()]]));
+      },
+    });
+    expect(textOf(await s.call('list_maps', {}))).toMatch(/2 maps:[\s\S]*b\.ds1/);
+    expect(refreshed).toBe(1);
+    const r = await s.call('open_map', { path: 'data/global/tiles/act1/a.ds1' });
+    expect(r.isError).toBe(true);
+    expect(textOf(r)).toBe('Error: The system cannot find the file specified. (os error 2)');
+    expect(refreshed).toBe(2);
+  });
+});
+
 describe.runIf(hasD2)('MCP session', () => {
   let s: McpSession;
   const saved = new Map<string, Uint8Array>();
@@ -91,5 +114,31 @@ describe.runIf(hasD2)('MCP session', () => {
     expect((await s.call('nope', {})).isError).toBe(true);
     expect(textOf(await s.call('new_map', { path: 'data/global/tiles/act1/x/new.ds1', width: 8, height: 6, level_type_id: 2 }))).toMatch(/8×6 cells/);
     expect(textOf(await s.call('map_info', {}))).toMatch(/unsaved/);
+  });
+  it('adds layers, sets cell flags, lists spawn regions and makes a no-spawn area, each one undo step', async () => {
+    expect(textOf(await s.call('new_map', { path: 'data/global/tiles/act1/x/spawn.ds1', width: 17, height: 9, level_type_id: 2 }))).toMatch(/17×9 cells/);
+    expect(textOf(await s.call('paint', { layer: 'floor1', rect: { x0: 0, y0: 0, x1: 16, y1: 8 }, tiles: [{ main: 0, sub: 0 }] }))).toMatch(/Painted/);
+    expect(textOf(await s.call('paint', { layer: 'wall1', rect: { x0: 4, y0: 0, x1: 4, y1: 8 }, tiles: [{ main: 0, sub: 0, orientation: 1 }] }))).toMatch(/Painted/);
+    const regions = textOf(await s.call('regions', {}));
+    expect(regions).toMatch(/^2 rooms, 3 regions monsters can spawn in\./);
+    expect(regions).toMatch(/Room 0,0-7,7:\n  seed 0,0 · SPAWNS · 32 cells, 32 floored/);
+
+    expect(textOf(await s.call('set_cell_flags', { regions: [[1, 1]], unwalkable: true, hidden: false }))).toMatch(/^Set not hidden, unwalkable on 32 floor1 cells\. \(undo/);
+    expect(textOf(await s.call('get_cells', { rect: { x0: 0, y0: 0, x1: 0, y1: 0 }, layers: ['floor1'] }))).toMatch(/y0: 0\/0/);
+    expect(textOf(await s.call('undo', {}))).toBe('Undid 1 step.');
+
+    const done = textOf(await s.call('no_spawn_area', { rect: { x0: 1, y0: 1, x1: 2, y1: 2 } }));
+    expect(done).toMatch(/1 room covered \(cells 0,0-7,7\)/);
+    expect(done).toMatch(/2 seed floors hidden under a floor2 copy/);
+    expect(done).toMatch(/Every region of those rooms is now a node/);
+    expect(textOf(await s.call('map_info', {}))).toMatch(/Layers: floor1, floor2/);
+    expect(textOf(await s.call('get_cells', { rect: { x0: 0, y0: 0, x1: 0, y1: 0 }, layers: ['floor1', 'floor2'] }))).toMatch(/\[floor1\]\ny0: 0\/0h\n\n\[floor2\]\ny0: 0\/0/);
+    expect(textOf(await s.call('regions', { spawning_only: true }))).toMatch(/^2 rooms, 1 region monsters can spawn in\.\nRoom 8,0-15,7:/);
+    expect(textOf(await s.call('undo', {}))).toBe('Undid 1 step.');
+    expect(textOf(await s.call('map_info', {}))).toMatch(/Layers: floor1, wall1, wall2, shadow\./);
+
+    expect(textOf(await s.call('add_layer', { kind: 'wall', count: 2 }))).toMatch(/Added 2 wall layers\. Layers: floor1, wall1, wall2, wall3, wall4, shadow\./);
+    expect((await s.call('add_layer', { kind: 'wall' })).isError).toBe(true);
+    expect(textOf(await s.call('list_placeable', { act: 2, filter: 'waypoint' }))).toMatch(/type 2 id \d{3}: Waypoint/i);
   });
 });

@@ -2,7 +2,9 @@ import type { Ds1Object } from '../formats/ds1';
 import { decodeTile, type Dt1Tile, type TileImage } from '../formats/dt1';
 import type { Palette } from '../formats/palette';
 import type { CellRect } from '../game/clipboard';
+import type { MapOverlay } from '../game/mapOverlays';
 import type { Sprite } from '../game/sprites';
+import { drawOverlayLegend, drawSubTilePaths, overlayPaths } from './overlay';
 import { cellToWorld, subTileToWorld, type DrawItem, type Scene } from './scene';
 
 /**
@@ -19,6 +21,10 @@ export interface ExportOptions {
   objects: boolean;
   /** Which scene items to draw (the map view's layer visibility). */
   visible: (it: DrawItem) => boolean;
+  /** Draw the special tiles (orientation 10/11: warps, entries…) that have graphics, after everything else. */
+  specials?: boolean;
+  /** A colour-coded overview (walkable sub-tiles, monster spawns) drawn over the map, with its legend. */
+  overlay?: MapOverlay | null;
   /** PNG (default) or JPEG (much smaller, for previews). */
   format?: 'png' | 'jpeg';
 }
@@ -107,12 +113,16 @@ export async function renderMapImage(scene: Scene, objects: Ds1Object[], sprites
   for (const it of scene.items) {
     if (it.kind === 'wall') flush(it.cellX + it.cellY - 1);
     else if (it.kind === 'roof' || it.kind === 'special') flush(Infinity);
-    if (!opt.visible(it) || it.kind === 'special' || !inArea(it.cellX, it.cellY)) continue;
+    if (!opt.visible(it) || (it.kind === 'special' && !opt.specials) || !inArea(it.cellX, it.cellY)) continue;
     const image = tileImage(it.tile);
     const img = toCanvas(it.tile, image, palette, it.kind === 'shadow');
     if (img && image) ctx.drawImage(img, it.x + image.offsetX, it.y + image.offsetY);
   }
   flush(Infinity);
+  if (opt.overlay) {
+    drawSubTilePaths(ctx, overlayPaths(opt.overlay, width, area), { x0: b.x, y0: b.y, x1: b.x + b.w, y1: b.y + b.h }, Infinity);
+    drawOverlayLegend(ctx, opt.overlay, Math.round(w / 100) + 4, Math.round(h / 100) + 4, Math.max(13, Math.min(64, Math.round(Math.max(w, h) / 75))));
+  }
   const type = opt.format === 'jpeg' ? 'image/jpeg' : 'image/png';
   return new Promise((resolve, reject) => canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error('Could not encode the image'))), type, 0.85));
 }

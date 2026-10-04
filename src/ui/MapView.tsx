@@ -21,6 +21,8 @@ import { canvasToWorld } from '../render/inputProjection';
 import { combinedCellAt, cycleWithWheel, tileEmphasis } from '../game/mapSelection';
 import { wallCategory } from '../game/wallCategories';
 import { stepAtOrBelow, stepZoom, WheelSteps } from './zoomSteps';
+import type { MapOverlay } from '../game/mapOverlays';
+import { drawSubTilePaths, overlayPaths, subTilePaths, type SubTilePaths } from '../render/overlay';
 
 export interface HoverInfo {
   cellX: number;
@@ -124,6 +126,8 @@ interface Props {
    * tinted, green for a copy, red for a cut, until they're placed.
    */
   objectGhost?: { objects: Ds1Object[]; cut: boolean } | null;
+  /** A colour-coded overview over the map (walkable sub-tiles, monster spawns), or null. */
+  overview?: MapOverlay | null;
   /** Draw the map in this light (multiplies every colour), or as stored when null. */
   light?: [number, number, number] | null;
   /** With `light`: a player's light radius (sub-tiles) around the cursor, as a player standing there would see. */
@@ -219,13 +223,14 @@ export function MapView(props: Props) {
   const automapImage = useMemo(() => (props.automap ? renderAutomap(map.ds1.width, map.ds1.height, props.automap) : null), [props.automap, map]);
   // Built once per scene, not per frame: a 150×150 map has 562,500 sub-tiles.
   const walk = useMemo(() => (visibility.walkable ? walkPaths(walkability(map.ds1, scene, map.lib), map.ds1.width, map.ds1.height) : null), [visibility.walkable, map, scene]);
+  const overviewPaths = useMemo(() => (props.overview ? overlayPaths(props.overview, map.ds1.width) : null), [props.overview, map]);
   const resizeDrag = useRef<{ side: Side; delta: ResizeDelta } | null>(null);
   /** The sub-tile under the cursor in walkability mode (drawn as the brush's footprint). */
   const walkCursor = useRef<[number, number] | null>(null);
   /** The cursor in world space (for the player's light preview). */
   const cursorWorld = useRef<[number, number] | null>(null);
-  const latest = useRef({ ...props, walk, resizeDrag, automapImage, walkCursor, cursorWorld });
-  latest.current = { ...props, walk, resizeDrag, automapImage, walkCursor, cursorWorld };
+  const latest = useRef({ ...props, walk, overviewPaths, resizeDrag, automapImage, walkCursor, cursorWorld });
+  latest.current = { ...props, walk, overviewPaths, resizeDrag, automapImage, walkCursor, cursorWorld };
 
   // Animation clock in game ticks (25 per second, like the game). Animated floors advance every 2.5 ticks (10 fps);
   // objects at their own rate. Without animated objects the clock only needs the floors' 10 fps.
@@ -612,7 +617,7 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     dirty.current = true;
-  }, [selection, pasteRect, selectedObject, props.selectedObjects, objectLabel, walk, props.resizeMode, props.marks, focus, automapImage, props.sprites, props.animations, hover, props.specialLabel, props.pops, props.walkMarks, props.walkBrush, props.light, props.playerLight, props.objectGhost, props.doomed, props.input?.objectLabels, props.objectsRevision]);
+  }, [selection, pasteRect, selectedObject, props.selectedObjects, objectLabel, walk, overviewPaths, props.resizeMode, props.marks, focus, automapImage, props.sprites, props.animations, hover, props.specialLabel, props.pops, props.walkMarks, props.walkBrush, props.light, props.playerLight, props.objectGhost, props.doomed, props.input?.objectLabels, props.objectsRevision]);
 
   // Input.
   useEffect(() => {
@@ -944,117 +949,24 @@ function drawPops(ctx: CanvasRenderingContext2D, pops: NonNullable<Props['pops']
   }
 }
 
-interface WalkChunk {
-  /** World-space bounds. */
-  x0: number;
-  y0: number;
-  x1: number;
-  y1: number;
-  noJump: Path2D;
-  noWalk: Path2D;
-}
-
-interface WalkPaths {
-  chunks: WalkChunk[];
-  /** World bounds of the whole map. */
-  bounds: { x0: number; y0: number; x1: number; y1: number };
-  /** Low-resolution raster for zoomed-out views, built on first use; one canvas pixel = `scale` world pixels. */
-  raster: { canvas: HTMLCanvasElement; scale: number } | null;
-}
-
-const WALK_CHUNK = 16; // cells per chunk side
-
-/**
- * The walkability overlay as paths in 16×16-cell chunks (only visible chunks are drawn), one parallelogram per run of
- * same-class sub-tiles along each sub-tile row (a diamond's top-right edge runs the same way as the row, so a run of
- * diamonds is one parallelogram).
- */
-function walkPaths(walk: Uint8Array, width: number, height: number): WalkPaths {
+/** The walkability overlay: red = blocks jumping/teleport too (may block walking); amber = blocks walking. */
+function walkPaths(walk: Uint8Array, width: number, height: number): SubTilePaths {
   const classOf = (sx: number, sy: number) => {
     const f = walk[(Math.floor(sy / 5) * width + Math.floor(sx / 5)) * 25 + (sy % 5) * 5 + (sx % 5)];
-    return f & SubTileFlag.BlockJump ? 2 : f & (SubTileFlag.BlockWalk | SubTileFlag.BlockPlayerWalk) ? 1 : 0;
+    return f & SubTileFlag.BlockJump ? 1 : f & (SubTileFlag.BlockWalk | SubTileFlag.BlockPlayerWalk) ? 2 : 0;
   };
-  const chunks: WalkChunk[] = [];
-  for (let cy0 = 0; cy0 < height; cy0 += WALK_CHUNK)
-    for (let cx0 = 0; cx0 < width; cx0 += WALK_CHUNK) {
-      const cx1 = Math.min(width, cx0 + WALK_CHUNK);
-      const cy1 = Math.min(height, cy0 + WALK_CHUNK);
-      const noJump = new Path2D();
-      const noWalk = new Path2D();
-      let any = false;
-      for (let sy = cy0 * 5; sy < cy1 * 5; sy++) {
-        for (let sx = cx0 * 5; sx < cx1 * 5; ) {
-          const c = classOf(sx, sy);
-          let end = sx + 1;
-          while (end < cx1 * 5 && classOf(end, sy) === c) end++;
-          if (c) {
-            any = true;
-            const target = c === 2 ? noJump : noWalk;
-            const [x0, y0] = subTileToWorld(sx, sy);
-            const [xn, yn] = subTileToWorld(end - 1, sy);
-            target.moveTo(x0, y0 - 8);
-            target.lineTo(xn + 16, yn);
-            target.lineTo(xn, yn + 8);
-            target.lineTo(x0 - 16, y0);
-            target.closePath();
-          }
-          sx = end;
-        }
-      }
-      if (!any) continue;
-      // Chunk corners in world space: north (cx0,cy0), east (cx1,cy0), south (cx1,cy1), west (cx0,cy1).
-      const [, ny] = cellToWorld(cx0, cy0);
-      const [ex] = cellToWorld(cx1, cy0);
-      const [, sy2] = cellToWorld(cx1, cy1);
-      const [wx] = cellToWorld(cx0, cy1);
-      chunks.push({ x0: wx - 16, y0: ny - 8, x1: ex + 16, y1: sy2 + 8, noJump, noWalk });
-    }
-  const [, top] = cellToWorld(0, 0);
-  const [right] = cellToWorld(width, 0);
-  const [, bottom] = cellToWorld(width, height);
-  const [left] = cellToWorld(0, height);
-  return { chunks, bounds: { x0: left - 16, y0: top - 8, x1: right + 16, y1: bottom + 8 }, raster: null };
+  return subTilePaths(classOf, ['rgba(255, 60, 70, 0.38)', 'rgba(255, 176, 40, 0.34)'], width, height);
 }
 
-const WALK_COLORS = { noJump: 'rgba(255, 60, 70, 0.38)', noWalk: 'rgba(255, 176, 40, 0.34)' };
-
-function drawWalk(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, cam: Camera, w: WalkPaths) {
+/** Draws sub-tile paths over the part of the map in view. */
+function drawPaths(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, cam: Camera, p: SubTilePaths) {
   const view = {
     x0: cam.x - canvas.width / 2 / cam.zoom,
     y0: cam.y - canvas.height / 2 / cam.zoom,
     x1: cam.x + canvas.width / 2 / cam.zoom,
     y1: cam.y + canvas.height / 2 / cam.zoom,
   };
-  const visible = w.chunks.filter((c) => c.x1 >= view.x0 && c.x0 <= view.x1 && c.y1 >= view.y0 && c.y0 <= view.y1);
-  // Zoomed out, many chunks are visible and each diamond is a pixel or two: draw the pre-rendered raster instead.
-  const worldW = w.bounds.x1 - w.bounds.x0;
-  const worldH = w.bounds.y1 - w.bounds.y0;
-  const scale = Math.max(2, Math.ceil(Math.max(worldW / 4096, worldH / 4096)));
-  if (visible.length > 12 && cam.zoom * scale <= 2) {
-    if (!w.raster || w.raster.scale !== scale) {
-      const r = document.createElement('canvas');
-      r.width = Math.ceil(worldW / scale);
-      r.height = Math.ceil(worldH / scale);
-      const rc = r.getContext('2d')!;
-      rc.setTransform(1 / scale, 0, 0, 1 / scale, -w.bounds.x0 / scale, -w.bounds.y0 / scale);
-      for (const c of w.chunks) {
-        rc.fillStyle = WALK_COLORS.noJump;
-        rc.fill(c.noJump);
-        rc.fillStyle = WALK_COLORS.noWalk;
-        rc.fill(c.noWalk);
-      }
-      w.raster = { canvas: r, scale };
-    }
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(w.raster.canvas, w.bounds.x0, w.bounds.y0, w.raster.canvas.width * scale, w.raster.canvas.height * scale);
-    return;
-  }
-  for (const c of visible) {
-    ctx.fillStyle = WALK_COLORS.noJump;
-    ctx.fill(c.noJump);
-    ctx.fillStyle = WALK_COLORS.noWalk;
-    ctx.fill(c.noWalk);
-  }
+  drawSubTilePaths(ctx, p, view, cam.zoom);
 }
 
 interface AutomapImage {
@@ -1089,7 +1001,8 @@ function renderAutomap(width: number, height: number, a: NonNullable<Props['auto
 
 type OverlayState = Props & {
   automapImage: AutomapImage | null;
-  walk: WalkPaths | null;
+  walk: SubTilePaths | null;
+  overviewPaths: SubTilePaths | null;
   resizeDrag: { current: { side: Side; delta: ResizeDelta } | null };
   walkCursor: { current: [number, number] | null };
   cursorWorld: { current: [number, number] | null };
@@ -1158,7 +1071,8 @@ function drawOverlay(canvas: HTMLCanvasElement, cam: Camera, s: OverlayState) {
   }
 
   // Red = blocks jumping/teleport too; amber = blocks walking.
-  if (walk) drawWalk(ctx, canvas, cam, walk);
+  if (walk) drawPaths(ctx, canvas, cam, walk);
+  if (s.overviewPaths) drawPaths(ctx, canvas, cam, s.overviewPaths);
   // Sub-tiles a walkability stroke is painting: filled in the colour they are getting.
   if (s.walkMarks?.keys.size) {
     ctx.beginPath();

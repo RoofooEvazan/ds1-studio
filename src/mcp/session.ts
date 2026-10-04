@@ -1,15 +1,18 @@
-import { EMPTY_CELL, isEmptyCell, writeDs1, WRITE_VERSION, type Ds1Object, type WallCell } from '../formats/ds1';
+import { decodeCell, EMPTY_CELL, encodeCell, isEmptyCell, writeDs1, WRITE_VERSION, type Ds1Object, type WallCell } from '../formats/ds1';
 import { embeddedFileName, newDs1, resizeDs1 } from '../formats/ds1ops';
 import { Orientation } from '../formats/dt1';
-import { clampRect, clearEdits, copyRect, pasteEdits, pasteObjects, type CellRect } from '../game/clipboard';
+import { clampRect, clearEdits, copyRect, MAX_FLOOR_LAYERS, MAX_WALL_LAYERS, pasteEdits, pasteObjects, type CellRect } from '../game/clipboard';
 import { checkMap } from '../game/compat';
 import { findTile, floodRegion, keyOf, objectInRect, paintEdits, rectCells, replaceEdits, rerollEdits, type TileKey } from '../game/editTools';
 import { GameData } from '../game/GameData';
 import { layerKey, layerLabel, MapDocument, type Brush, type CellEdit, type LayerRef } from '../game/MapDocument';
 import { openMap, type OpenMap } from '../game/openMap';
 import { specialTileInfo } from '../game/specialTiles';
+import { noSpawnPlan, presetRooms, roomAt, roomRegions, spawns, UNWALKABLE, type PresetRoom, type RoomRegions } from '../game/spawnRegions';
+import { OBJECTS_PER_ACT } from '../game/objectCatalog';
 import type { Sprite } from '../game/sprites';
 import { buildScene, type Scene } from '../render/scene';
+import { overlayFlags, spawnLevelOf, spawnOverlay, walkableOverlay, type MapOverlay } from '../game/mapOverlays';
 import { exportSize } from '../render/exportImage';
 import type { SaveTarget } from '../vfs/save';
 import { normalizePath } from '../vfs/vfs';
@@ -36,11 +39,20 @@ export interface ToolDef {
 /** Things only the host (the hidden app window) can do. */
 export interface SessionHost {
   saveTarget: SaveTarget | null;
+  /** Lists the mod folders again (files added or removed since the server started). */
+  refresh?: () => Promise<void>;
   /** PNG of part of the map (base64), or null when rendering isn't available. */
-  render?: (scene: Scene, objects: Ds1Object[], sprites: Map<string, Sprite>, map: OpenMap, area: CellRect | null, scale: number, withObjects: boolean) => Promise<string>;
+  render?: (scene: Scene, objects: Ds1Object[], sprites: Map<string, Sprite>, map: OpenMap, area: CellRect | null, scale: number, withObjects: boolean, specials: boolean, overlay?: MapOverlay | null) => Promise<string>;
 }
 
 class ToolError extends Error {}
+
+/** The message of anything thrown: native calls reject with a plain string, not an Error. */
+export const errorText = (e: unknown): string => (e instanceof Error ? e.message : typeof e === 'string' ? e : JSON.stringify(e) ?? String(e));
+
+/** Tools that look up files: the mod folders are listed again before them. */
+const LISTS_FILES = new Set(['list_maps', 'open_map', 'new_map', 'check_map']);
+
 const fail = (msg: string): never => {
   throw new ToolError(msg);
 };
@@ -96,6 +108,9 @@ const TILE = {
   required: ['main', 'sub'],
 };
 const LAYER = { type: 'string', enum: LAYER_NAMES, description: 'Tile layer: floor1-2, wall1-4 or shadow.' };
+const CELLS = { type: 'array', items: { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 }, description: '[[x, y], …]' };
+const REGIONS = { ...CELLS, description: 'Cells [[x, y], …]: each stands for the whole spawn region it is in (its 8×8 room’s wall-bounded part; see the regions tool).' };
+const roomText = (r: PresetRoom) => `${r.x0},${r.y0}-${r.x0 + r.w - 1},${r.y0 + r.h - 1}`;
 
 export const TOOLS: ToolDef[] = [
   {
@@ -193,11 +208,50 @@ export const TOOLS: ToolDef[] = [
     description: 'Add (positive) or remove (negative) cells on each side of the map. Objects move with the cells.',
     inputSchema: { type: 'object', properties: { left: { type: 'integer' }, top: { type: 'integer' }, right: { type: 'integer' }, bottom: { type: 'integer' } } },
   },
+  {
+    name: 'add_layer',
+    description: 'Add empty floor or wall layers to the map (at most 2 floor and 4 wall layers). One undo step.',
+    inputSchema: { type: 'object', properties: { kind: { type: 'string', enum: ['floor', 'wall'] }, count: { type: 'integer', description: 'How many (default 1).' } }, required: ['kind'] },
+  },
+  {
+    name: 'set_cell_flags',
+    description:
+      'Set or clear cell flags on one layer for many cells at once: hidden (not drawn in game, still collides), unwalkable (the DS1 cell bit 17, prop3 & 0x02: blocks walking on the whole cell), or raw prop1-prop4 bytes (applied first). Cells by list, rectangle or spawn region. One undo step.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        layer: { ...LAYER, description: 'Layer (default floor1).' },
+        cells: CELLS,
+        rect: RECT,
+        regions: REGIONS,
+        only_tiles: { type: 'boolean', description: 'Skip cells with no tile on the layer.' },
+        hidden: { type: 'boolean' },
+        unwalkable: { type: 'boolean' },
+        prop1: { type: 'integer' },
+        prop2: { type: 'integer' },
+        prop3: { type: 'integer' },
+        prop4: { type: 'integer' },
+      },
+    },
+  },
+  {
+    name: 'regions',
+    description:
+      'The spawn regions of the map’s 8×8 game rooms, as the game works them out with LvlPrest Logicals=1: parts of a room bounded by wall1 walls, each with its seed (first cell scanned). A region whose seed has a hidden floor1 tile (or main index 30) is a node: no random monsters there. Rooms with a level warp spawn nothing.',
+    inputSchema: { type: 'object', properties: { rect: { ...RECT, description: 'Only rooms touching this rectangle (default: the whole map).' }, spawning_only: { type: 'boolean', description: 'Only list regions monsters can spawn in.' } } },
+  },
+  {
+    name: 'no_spawn_area',
+    description:
+      'Stop random monsters spawning in an area while keeping it walkable and looking the same: every region of each 8×8 room touching the cells gets a hidden floor1 tile at its seed (a floored seed’s tile is copied to floor2 first; a seed without floor gets a hidden floor tile and the unwalkable bit). Adds floor2 when needed. Needs LvlPrest Logicals=1. Reports the rooms covered. One undo step.',
+    inputSchema: { type: 'object', properties: { cells: CELLS, rect: RECT, whole_rooms: { type: 'boolean', description: 'Change every floored cell of the rooms, not only the region seeds.' } } },
+  },
   { name: 'list_objects', description: 'The objects and NPCs placed in the map: index, type (1 NPC, 2 object), id, name, sub-tile position (cell = position / 5) and path length.', inputSchema: { type: 'object', properties: { filter: { type: 'string' } } } },
   {
     name: 'list_placeable',
-    description: 'Objects and NPCs that can be placed in this map’s act (type, id, name), optionally filtered by name.',
-    inputSchema: { type: 'object', properties: { filter: { type: 'string' }, type: { type: 'integer', description: '1 = NPCs, 2 = objects' } } },
+    description:
+      'Objects and NPCs that can be placed in this map (type, id, name), optionally filtered by name. With act, objects of another act, listed with the id that reaches them from this map: negative for earlier acts, 150 + their objects.txt row for later ones.',
+    inputSchema: { type: 'object', properties: { filter: { type: 'string' }, type: { type: 'integer', description: '1 = NPCs, 2 = objects' }, act: { type: 'integer', description: '1-5 (default: the map’s act). NPCs only come from the map’s own act.' } } },
   },
   {
     name: 'add_object',
@@ -222,7 +276,21 @@ export const TOOLS: ToolDef[] = [
   {
     name: 'render_map',
     description: 'A picture (JPEG) of the map or a rectangle of it, as it looks in the editor, to see the result of edits. Scale is picked to fit ~1568 px unless given; render a rectangle at scale 1 to see details.',
-    inputSchema: { type: 'object', properties: { rect: RECT, scale: { type: 'number', description: '1 = game pixels, 0.5 = half…' }, objects: { type: 'boolean', description: 'Draw object sprites (default true).' } } },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        rect: RECT,
+        scale: { type: 'number', description: '1 = game pixels, 0.5 = half…' },
+        objects: { type: 'boolean', description: 'Draw object sprites (default true).' },
+        special_tiles: { type: 'boolean', description: 'Also draw special tiles (orientation 10/11) that have graphics, such as a warp’s arch (default false; drawn last, over the rest).' },
+        overlay: {
+          type: 'string',
+          enum: ['walkable', 'spawn'],
+          description:
+            'Colour the map sub-tile by sub-tile, with a legend: "walkable" = where players can walk (green), monsters only (yellow, flag 0x08) or blocked (red; tile flag 0x01, the cell’s unwalkable bit), plus void players can walk into (magenta: in game a cell without a floor blocks nothing unless a tile there does) and the open edge where they walk off (orange); "spawn" = where random monsters can be placed (green) and why not elsewhere: blocked, node region, room with a level warp, or the level spawns none (LvlPrest Populate, Levels MonDen).',
+        },
+      },
+    },
   },
   {
     name: 'save_map',
@@ -246,9 +314,10 @@ export class McpSession {
     try {
       const fn = (this as unknown as Record<string, (a: Record<string, unknown>) => Promise<ToolResult> | ToolResult>)[`t_${name}`];
       if (!fn || !TOOLS.some((t) => t.name === name)) return fail(`Unknown tool "${name}".`);
+      if (LISTS_FILES.has(name)) await this.host.refresh?.();
       return await fn.call(this, args);
     } catch (e) {
-      return { content: [{ type: 'text', text: e instanceof ToolError ? e.message : `Error: ${(e as Error).message}` }], isError: true };
+      return { content: [{ type: 'text', text: e instanceof ToolError ? e.message : `Error: ${errorText(e)}` }], isError: true };
     }
   }
 
@@ -266,6 +335,34 @@ export class McpSession {
     const { doc } = this.need();
     if (!doc.layers().some((x) => layerKey(x) === layerKey(l))) fail(`This map has no ${layerName(l)} layer (it has ${doc.layers().map(layerName).join(', ')}).`);
     return l;
+  }
+
+  /** Cells from `cells`, `rect` and/or `regions` (each cell standing for its spawn region), without repeats. */
+  private pickCells(a: Record<string, unknown>): [number, number][] {
+    const { map } = this.need();
+    const { width, height } = map.ds1;
+    const out = new Map<number, [number, number]>();
+    const add = (x: number, y: number) => out.set(y * width + x, [x, y]);
+    const point = (c: unknown): [number, number] => {
+      const [x, y] = c as number[];
+      return [int(x, 'x', 0, width - 1), int(y, 'y', 0, height - 1)];
+    };
+    if (Array.isArray(a.cells)) for (const c of a.cells) add(...point(c));
+    if (a.rect) {
+      const r = parseRect(a.rect, width, height);
+      for (let y = r.y0; y <= r.y1; y++) for (let x = r.x0; x <= r.x1; x++) add(x, y);
+    }
+    if (Array.isArray(a.regions)) {
+      const rooms = presetRooms(width, height);
+      for (const c of a.regions) {
+        const [x, y] = point(c);
+        const room = roomAt(rooms, x, y) ?? fail(`${x},${y} is in no game room (the last row and column of a map only border rooms).`);
+        const reg = roomRegions(map.ds1, room).regions.find((r) => r.cells.some((p) => p.x === x && p.y === y));
+        for (const p of reg?.cells ?? []) add(p.x, p.y);
+      }
+    }
+    if (!Array.isArray(a.cells) && !a.rect && !Array.isArray(a.regions)) fail('Give cells, rect or regions.');
+    return [...out.values()];
   }
 
   private applied(changed: boolean, what: string): ToolResult {
@@ -496,6 +593,104 @@ export class McpSession {
     return text(`Resized to ${doc.ds1.width}×${doc.ds1.height}.`);
   }
 
+  t_add_layer(a: Record<string, unknown>): ToolResult {
+    const { map, doc } = this.need();
+    const kind = a.kind === 'wall' ? 'wall' : a.kind === 'floor' ? 'floor' : fail('kind must be "floor" or "wall".');
+    const max = kind === 'floor' ? MAX_FLOOR_LAYERS : MAX_WALL_LAYERS;
+    const have = kind === 'floor' ? map.ds1.floors.length : map.ds1.walls.length;
+    const n = a.count === undefined ? 1 : int(a.count, 'count', 1, max);
+    if (have + n > max) fail(`The map has ${have} ${kind} layer${have === 1 ? '' : 's'}; a DS1 holds at most ${max}.`);
+    doc.mutate((d) => {
+      const cells = d.width * d.height;
+      for (let i = 0; i < n; i++)
+        if (kind === 'floor') d.floors.push(Array.from({ length: cells }, () => EMPTY_CELL));
+        else d.walls.push(Array.from({ length: cells }, () => ({ ...EMPTY_CELL, orientation: 0, orientationHigh: 0 })));
+    }, `Add ${n} ${kind} layer${n === 1 ? '' : 's'}`);
+    return text(`Added ${n} ${kind} layer${n === 1 ? '' : 's'}. Layers: ${doc.layers().map(layerName).join(', ')}. (undo with the undo tool)`);
+  }
+
+  t_set_cell_flags(a: Record<string, unknown>): ToolResult {
+    const { doc } = this.need();
+    const layer = this.haveLayer(parseLayer(a.layer ?? 'floor1'));
+    const raw = (['prop1', 'prop2', 'prop3', 'prop4'] as const).filter((k) => a[k] !== undefined).map((k) => [k, int(a[k], k, 0, 255)] as const);
+    if (!raw.length && a.hidden === undefined && a.unwalkable === undefined) fail('Give hidden, unwalkable and/or prop1-prop4.');
+    const edits: CellEdit[] = [];
+    let empty = 0;
+    for (const [x, y] of this.pickCells(a)) {
+      const c = doc.cell(layer, x, y);
+      if (a.only_tiles && isEmptyCell(c)) continue;
+      const p = { prop1: c.prop1, prop2: c.prop2, prop3: c.prop3, prop4: c.prop4 };
+      for (const [k, v] of raw) p[k] = v;
+      if (a.unwalkable !== undefined) p.prop3 = a.unwalkable ? p.prop3 | UNWALKABLE : p.prop3 & ~UNWALKABLE;
+      if (a.hidden !== undefined) p.prop4 = a.hidden ? p.prop4 | 0x80 : p.prop4 & 0x7f;
+      const next = { ...c, ...decodeCell(encodeCell({ ...c, ...p })) };
+      if (isEmptyCell(next)) empty++;
+      edits.push({ layer, x, y, cell: next });
+    }
+    const what = [
+      ...raw.map(([k, v]) => `${k}=${v}`),
+      ...(a.hidden !== undefined ? [a.hidden ? 'hidden' : 'not hidden'] : []),
+      ...(a.unwalkable !== undefined ? [a.unwalkable ? 'unwalkable' : 'walkable'] : []),
+    ].join(', ');
+    const changed = doc.apply(edits, `Cell flags on ${layerLabel(layer)}`);
+    const note = empty ? ` (${empty} of them have no tile on ${layerName(layer)}: the game may ignore flags there)` : '';
+    return this.applied(changed, `Set ${what} on ${edits.length} ${layerName(layer)} cell${edits.length === 1 ? '' : 's'}${note}`);
+  }
+
+  // --- spawning -------------------------------------------------------------------------------------------------
+
+  t_regions(a: Record<string, unknown>): ToolResult {
+    const { map } = this.need();
+    const r = a.rect ? parseRect(a.rect, map.ds1.width, map.ds1.height) : null;
+    const rooms = presetRooms(map.ds1.width, map.ds1.height).filter((m) => !r || (m.x0 <= r.x1 && m.x0 + m.w - 1 >= r.x0 && m.y0 <= r.y1 && m.y0 + m.h - 1 >= r.y0));
+    const lines: string[] = [];
+    let open = 0;
+    for (const room of rooms) {
+      const rr = roomRegions(map.ds1, room);
+      open += rr.regions.filter((g) => spawns(rr, g)).length;
+      const shown = rr.regions.filter((g) => !a.spawning_only || spawns(rr, g));
+      if (!shown.length) continue;
+      lines.push(`Room ${roomText(room)}${rr.warp ? ' (level warp: nothing spawns)' : ''}:`);
+      for (const g of shown) lines.push(`  seed ${g.seed.x},${g.seed.y} · ${regionState(rr, g)} · ${g.cells.length} cells, ${g.floored} floored · ${cellsText(g.cells)}`);
+    }
+    const p = map.resolution.preset;
+    const head =
+      `${rooms.length} room${rooms.length === 1 ? '' : 's'}, ${open} region${open === 1 ? '' : 's'} monsters can spawn in.` +
+      (p?.logicals === false ? ' Note: this map’s LvlPrest row has Logicals 0, so the game doesn’t split its rooms into regions: nodes do nothing there.' : '');
+    const MAX = 600;
+    return text([head, ...lines.slice(0, MAX), ...(lines.length > MAX ? [`… ${lines.length - MAX} more lines: give a rect.`] : [])].join('\n'));
+  }
+
+  t_no_spawn_area(a: Record<string, unknown>): ToolResult {
+    const { map, doc } = this.need();
+    const plan = noSpawnPlan(map.ds1, this.pickCells(a), { wholeRooms: !!a.whole_rooms });
+    if (!plan.rooms.length) fail('Those cells are in no game room (the last row and column of a map only border rooms).');
+    const label = `No-spawn area (${plan.rooms.length} room${plan.rooms.length === 1 ? '' : 's'})`;
+    if (plan.floors > map.ds1.floors.length)
+      doc.mutate((d) => {
+        while (d.floors.length < plan.floors) d.floors.push(Array.from({ length: d.width * d.height }, () => EMPTY_CELL));
+        writeEdits(d, plan.edits);
+      }, `${label}, adding floor2`);
+    else doc.apply(plan.edits, label);
+    const still = plan.rooms.flatMap((room) => {
+      const rr = roomRegions(map.ds1, room);
+      return rr.regions.filter((g) => spawns(rr, g)).map((g) => `${g.seed.x},${g.seed.y}`);
+    });
+    const p = map.resolution.preset;
+    return text(
+      [
+        `${plan.rooms.length} room${plan.rooms.length === 1 ? '' : 's'} covered (cells ${plan.rooms.map(roomText).join('; ')}).`,
+        `${plan.copied} seed floor${plan.copied === 1 ? '' : 's'} hidden under a floor2 copy, ${plan.voids} void seed${plan.voids === 1 ? '' : 's'} given a hidden unwalkable floor.`,
+        ...(plan.skipped.length ? [`Not changed: ${plan.skipped.join('; ')}.`] : []),
+        still.length ? `Regions that can still spawn monsters (seeds): ${still.join(' ')}.` : 'Every region of those rooms is now a node: no random monsters there.',
+        p?.logicals === false ? 'Warning: this map’s LvlPrest row has Logicals 0; nodes only work with Logicals 1.' : !p ? 'The map’s LvlPrest row needs Logicals 1 for nodes to work.' : '',
+        '(undo with the undo tool)',
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    );
+  }
+
   // --- objects --------------------------------------------------------------------------------------------------
 
   t_list_objects(a: Record<string, unknown>): ToolResult {
@@ -513,13 +708,23 @@ export class McpSession {
   t_list_placeable(a: Record<string, unknown>): ToolResult {
     const { map } = this.need();
     const f = String(a.filter ?? '').toLowerCase();
-    const rows = this.gd.objectList(map.ds1.act).filter((o) => (!a.type || o.type === Number(a.type)) && (!f || o.name.toLowerCase().includes(f)));
-    return text(rows.map((o) => `type ${o.type} id ${o.id}: ${o.name}${o.hasSprite ? '' : ' (no sprite)'}`).join('\n') || 'None found.');
+    const act = map.ds1.act;
+    const from = a.act === undefined ? act : int(a.act, 'act', 1, 5) - 1;
+    // The id that reaches another act's object from this map (as the Objects gallery places it): below 150 the map's
+    // act table runs back into earlier acts'; 150 and up is an objects.txt row.
+    const idHere = (o: { id: number; row?: number }) => (from === act ? o.id : from < act ? o.id + (from - act) * OBJECTS_PER_ACT : o.row !== undefined ? OBJECTS_PER_ACT + o.row : null);
+    const rows = this.gd
+      .objectList(from)
+      .filter((o) => (from === act || o.type === 2) && (!a.type || o.type === Number(a.type)) && (!f || o.name.toLowerCase().includes(f)))
+      .map((o) => ({ ...o, here: idHere(o) }))
+      .filter((o) => o.here !== null);
+    const head = from === act ? '' : `Act ${from + 1} objects, with the ids that place them in this act ${act + 1} map:\n`;
+    return text(head + (rows.map((o) => `type ${o.type} id ${o.here}: ${o.name}${o.hasSprite ? '' : ' (no sprite)'}`).join('\n') || 'None found.'));
   }
 
   t_add_object(a: Record<string, unknown>): ToolResult {
     const { map, doc } = this.need();
-    const o: Ds1Object = { type: int(a.type, 'type', 1, 2), id: int(a.id, 'id', 0, 9999), x: int(a.x, 'x', 0, map.ds1.width * 5 - 1), y: int(a.y, 'y', 0, map.ds1.height * 5 - 1), flags: 0, path: [] };
+    const o: Ds1Object = { type: int(a.type, 'type', 1, 2), id: int(a.id, 'id', -600, 9999), x: int(a.x, 'x', 0, map.ds1.width * 5 - 1), y: int(a.y, 'y', 0, map.ds1.height * 5 - 1), flags: 0, path: [] };
     doc.setObjects([...map.ds1.objects, o], `Add ${this.gd.objectName(map.ds1.act, o.type, o.id)}`);
     return text(`Added #${map.ds1.objects.length - 1} ${this.gd.objectName(map.ds1.act, o.type, o.id)} at sub-tile ${o.x},${o.y}.`);
   }
@@ -590,8 +795,15 @@ export class McpSession {
         const s = await this.gd.objectSprite(map.ds1.act, o.type, o.id);
         if (s) sprites.set(k, s);
       }
-    const data = await this.host.render!(this.scene(), map.ds1.objects, sprites, map, area, scale, a.objects !== false);
-    return { content: [{ type: 'image', data, mimeType: 'image/jpeg' }, { type: 'text', text: `Rendered ${area ? `${r.x0},${r.y0}-${r.x1},${r.y1}` : 'the whole map'} at ${Math.round(scale * 100)}%.` }] };
+    const scene = this.scene();
+    if (a.overlay !== undefined && a.overlay !== 'walkable' && a.overlay !== 'spawn') fail('overlay must be "walkable" or "spawn".');
+    const flags = a.overlay ? overlayFlags(map.ds1, scene, map.lib, map.resolution.preset) : null;
+    const overlay = !flags ? null : a.overlay === 'walkable' ? walkableOverlay(map.ds1, flags) : spawnOverlay(map.ds1, flags, spawnLevelOf(this.gd, map));
+    const data = await this.host.render!(scene, map.ds1.objects, sprites, map, area, scale, a.objects !== false, a.special_tiles === true, overlay);
+    const legend = overlay
+      ? ` ${overlay.title}: ${overlay.classes.map((c, i) => (overlay.counts[i] ? `${c.label} ${Math.round(overlay.counts[i] / 25)} tiles²` : '')).filter(Boolean).join(', ')}. ${overlay.notes.join(' ')}`
+      : '';
+    return { content: [{ type: 'image', data, mimeType: 'image/jpeg' }, { type: 'text', text: `Rendered ${area ? `${r.x0},${r.y0}-${r.x1},${r.y1}` : 'the whole map'} at ${Math.round(scale * 100)}%.${legend}` }] };
   }
 
   async t_save_map(a: Record<string, unknown>): Promise<ToolResult> {
@@ -611,6 +823,16 @@ export class McpSession {
     return text(`${where}. If this map is open in the DS1 Studio window, reopen it there to see the changes.`);
   }
 }
+
+/** A region's cells, shortened to their bounding box when there are many. */
+function cellsText(cells: { x: number; y: number }[]): string {
+  if (cells.length <= 6) return cells.map((c) => `${c.x},${c.y}`).join(' ');
+  const xs = cells.map((c) => c.x);
+  const ys = cells.map((c) => c.y);
+  return `within ${Math.min(...xs)},${Math.min(...ys)}-${Math.max(...xs)},${Math.max(...ys)}`;
+}
+
+const regionState = (rr: RoomRegions, g: RoomRegions['regions'][number]) => (g.node ? 'node (no spawns)' : rr.warp ? 'warp room' : !g.floored ? 'no floor' : 'SPAWNS');
 
 /** Writes cell edits straight into a map (inside MapDocument.mutate). */
 function writeEdits(d: OpenMap['ds1'], edits: CellEdit[]) {

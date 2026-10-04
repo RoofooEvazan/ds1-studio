@@ -73,6 +73,15 @@ describe.runIf(hasD2)('Add to game, checked against the vanilla tables', async (
     expect(titles).toMatch(/says Act 1, but the game treats it as Act 5/);
     expect(titles).toMatch(/Act 5 palette but its tiles are Act 1 tiles/);
     expect(titles).toMatch(/overlaps level 136 "Act 5 - Pandemonium Finale"/);
+    // A level the mod's own MPQ doesn't have, in the Act 5 slot: PD2 drew such levels in the Act 5 palette whatever Pal
+    // said, so the advice is the tiles, not Pal (and Pal 0 doesn't silence it). Said only when the art shows the act.
+    for (const pal of ['4', '0']) {
+      const pick = { ...tables, levels: setCell(appended, appended.rows.length - 1, 'Pal', pal), prest };
+      const newLevel = verifyInGame(pick, rel, ds1, { isNewLevel: (id) => id === 137, tilesAct: 0 }).map((p) => p.title).join(' | ');
+      expect(newLevel).toMatch(/Level 137 is a new level in the Act 5 slot, but its tiles are Act 1 tiles/);
+      expect(newLevel).not.toMatch(/palette but its tiles are/);
+      expect(verifyInGame(pick, rel, ds1, { isNewLevel: (id) => id === 137 }).map((p) => p.title).join(' | ')).not.toMatch(/its tiles are/);
+    }
   });
 
   it('offers to put a table back in order when a row was inserted mid-table, without changing any Id', async () => {

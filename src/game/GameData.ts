@@ -5,7 +5,7 @@ import { OLD_ACT5_PALETTE, parsePalette, palettePath, type Palette } from '../fo
 import { parseTxt, type TxtTable } from '../formats/txt';
 import { normalizePath, type LayeredFs } from '../vfs/vfs';
 import { loadObjectSprite, type Sprite, type SpriteSpec } from './sprites';
-import { buildCatalog, findObjectPresets, GAME_BINARIES } from './objectCatalog';
+import { buildCatalog, findObjectPresets, GAME_BINARIES, OBJECTS_PER_ACT, objectRowsByNumber, type ObjectRowEntry } from './objectCatalog';
 
 export interface LvlTypeInfo {
   id: number;
@@ -23,6 +23,22 @@ export interface PresetInfo {
   /** How many roof/wall hide areas ("pops") the game reads from the map, and their trigger padding in sub-tiles. */
   pops: number;
   popPad: number;
+  /** Logicals=1: rooms are split into wall-bounded regions, and seeds can mark them as no-spawn (see spawnRegions). */
+  logicals?: boolean;
+  /** Populate=1: random monsters are placed. */
+  populate?: boolean;
+  /** FillBlanks=1: cells without a first-layer floor get a hidden blank floor tile (style 30), with its flags. */
+  fillBlanks?: boolean;
+}
+
+/** A level's random-monster settings (Levels.txt), for the monster spawn overlay. */
+export interface LevelSpawnInfo {
+  id: number;
+  name: string;
+  /** MonDen for Normal, Nightmare and Hell: 0 = no random monsters on that difficulty. */
+  monDen: [number, number, number];
+  /** Monster types listed (mon1-25, then nmon1-25 for Nightmare and Hell). */
+  monsters: [number, number];
 }
 
 export type Dt1Source = 'lvlprest' | 'guessed' | 'embedded' | 'manual';
@@ -46,10 +62,13 @@ export class GameData {
   objectPresets: Int32Array[] | null = null;
   private levelTypeById = new Map<number, number>();
   private levelPalById = new Map<number, number>();
+  private levelSpawnById = new Map<number, LevelSpawnInfo>();
   readonly lvlTypes: LvlTypeInfo[] = [];
   readonly warnings: string[] = [];
   /** "act:type:id" -> name and sprite recipe, from the game's own tables (acts 1-based; see objectCatalog). */
   private objRows = new Map<string, { name: string; spec: SpriteSpec | null; nameKey?: string; selectable?: boolean; row?: number }>();
+  /** objects.txt rows by record number, for DS1 object ids of 150 and up (row = id - 150). */
+  private objByRow = new Map<number, ObjectRowEntry>();
   private sprites = new Map<string, Promise<Sprite | null>>();
   /** MonPreset.txt "Place" per act (1-based), indexed by NPC id. */
   private monPresets = new Map<number, string[]>();
@@ -89,6 +108,7 @@ export class GameData {
     gd.objectTable = !!presets;
     gd.objectPresets = presets;
     if (!presets) gd.warnings.push('The object table wasn’t found in D2Common.dll or Game.exe; objects are shown by number.');
+    gd.objByRow = objectRowsByNumber({ objects });
     for (const e of buildCatalog(presets, { objects, monPreset, monStats, monStats2, superUniques })) {
       gd.objRows.set(`${e.act}:${e.type}:${e.id}`, { name: e.name, spec: e.spec, nameKey: e.nameKey, selectable: e.selectable, row: e.row });
     }
@@ -108,6 +128,13 @@ export class GameData {
       if (!Number.isFinite(id)) continue;
       gd.levelTypeById.set(id, Number(row['LevelType']));
       gd.levelPalById.set(id, Number(row['Pal']) || 0);
+      const listed = (prefix: string) => Array.from({ length: 25 }, (_, i) => row[`${prefix}${i + 1}`]).filter((m) => m && m !== '0').length;
+      gd.levelSpawnById.set(id, {
+        id,
+        name: row['Name'] ?? '',
+        monDen: [Number(row['MonDen']) || 0, Number(row['MonDen(N)']) || 0, Number(row['MonDen(H)']) || 0],
+        monsters: [listed('mon'), listed('nmon')],
+      });
     }
     for (const row of prest?.rows ?? []) {
       const info: PresetInfo = {
@@ -117,6 +144,9 @@ export class GameData {
         dt1Mask: Number(row['Dt1Mask']) >>> 0,
         pops: Number(row['Pops']) || 0,
         popPad: Number(row['PopPad']) || 0,
+        logicals: Number(row['Logicals']) === 1,
+        populate: Number(row['Populate']) === 1,
+        fillBlanks: Number(row['FillBlanks']) === 1,
       };
       for (let i = 1; i <= 6; i++) {
         const f = row[`File${i}`];
@@ -161,8 +191,8 @@ export class GameData {
   }
 
   /**
-   * Display name of a DS1 object, from the object catalogue (normalising ids that spill into the next act the way
-   * WinDS1 does: 60 NPC / 150 object ids per act), then MonPreset.txt for NPCs, else "type,id".
+   * Display name of a DS1 object, from the object catalogue (object ids of 150+ are objects.txt rows; negative ids
+   * reach back into earlier acts' tables: 60 NPC / 150 object ids per act), then MonPreset.txt for NPCs, else "type,id".
    */
   objectName(act0: number, type: number, id: number): string {
     const name = this.objRow(act0, type, id)?.name;
@@ -173,8 +203,13 @@ export class GameData {
 
   private objRow(act0: number, type: number, id: number) {
     let act = act0 + 1;
+    // The game reads an object id of 150 or more as an objects.txt row (id - 150), whatever the act
+    // (D2Common, D2MOO DrlgPreset.cpp); only ids below 150 go through the act's table.
+    if (type === 2 && id >= OBJECTS_PER_ACT) return this.objByRow.get(id - OBJECTS_PER_ACT) ?? null;
     const exact = this.objRows.get(`${act}:${type}:${id}`);
     if (exact) return exact;
+    // An NPC id past 60 that the act's own MonPreset rows cover is that row (PD2's acts have up to 80), not a spill.
+    if (type === 1 && id >= 60 && id < (this.monPresets.get(act)?.length ?? 0)) return null;
     const per = type === 1 ? 60 : 150;
     let n = id;
     while (n < 0) {
@@ -186,6 +221,11 @@ export class GameData {
       n -= per;
     }
     return this.objRows.get(`${act}:${type}:${n}`) ?? null;
+  }
+
+  /** The objects.txt row (record number) a DS1 object resolves to, or null (NPCs, unknown ids). */
+  objectRowNumber(act0: number, type: number, id: number): number | null {
+    return type === 2 ? (this.objRow(act0, type, id)?.row ?? null) : null;
   }
 
   /** The string-table key of the name an object shows in game on hover (objects.txt Name), if it shows one. */
@@ -237,15 +277,15 @@ export class GameData {
    * Every placeable object/NPC known for an act (0-based): the catalogue's rows for that act, plus MonPreset.txt NPC
    * ids it doesn't cover. Sorted by type, then id.
    */
-  objectList(act0: number): { type: number; id: number; name: string; hasSprite: boolean }[] {
+  objectList(act0: number): { type: number; id: number; name: string; hasSprite: boolean; row?: number }[] {
     const act = act0 + 1;
-    const out: { type: number; id: number; name: string; hasSprite: boolean }[] = [];
+    const out: { type: number; id: number; name: string; hasSprite: boolean; row?: number }[] = [];
     const seen = new Set<string>();
     for (const [key, row] of this.objRows) {
       const [a, type, id] = key.split(':').map(Number);
       if (a !== act) continue;
       seen.add(`${type}:${id}`);
-      out.push({ type, id, name: row.name || `${type === 1 ? 'NPC' : 'Object'} ${id}`, hasSprite: !!row.spec });
+      out.push({ type, id, name: row.name || `${type === 1 ? 'NPC' : 'Object'} ${id}`, hasSprite: !!row.spec, row: row.row });
     }
     (this.monPresets.get(act) ?? []).forEach((place, id) => {
       if (!place || seen.has(`1:${id}`)) return;
@@ -267,6 +307,11 @@ export class GameData {
   levelPal(levelId: number): number | null {
     const p = this.levelPalById.get(levelId);
     return p === undefined ? null : Math.min(4, Math.max(0, p));
+  }
+
+  /** A level's random-monster settings (Levels.txt MonDen and monster lists), or null when it has no row. */
+  levelSpawn(levelId: number): LevelSpawnInfo | null {
+    return this.levelSpawnById.get(levelId) ?? null;
   }
 
   /** The levels (Levels.txt Id > 0) whose LevelType is this type. */

@@ -71,6 +71,17 @@ export class LooseSource implements FileSource {
 
   private labels = new Map<string, string>();
 
+  /** Replaces the whole file list (a folder listed again), keeping per-file labels of files still there. */
+  replaceFiles(files: Map<string, () => Promise<Uint8Array>>): void {
+    this.files.clear();
+    this.index.clear();
+    for (const [path, open] of files) {
+      this.files.set(path, open);
+      this.index.set(normalizePath(path), open);
+    }
+    for (const k of [...this.labels.keys()]) if (!this.index.has(k)) this.labels.delete(k);
+  }
+
   /** Adds or replaces a file. `label` optionally overrides the source label for this file. */
   set(path: string, open: () => Promise<Uint8Array>, label?: string): void {
     const key = normalizePath(path);
@@ -105,6 +116,15 @@ export class LayeredFs {
     const copy = bytes.slice();
     this.gone.delete(normalizePath(path));
     this.saved.set(path, async () => copy.slice(), label);
+  }
+
+  /**
+   * After the real sources were listed again (files added, changed or removed outside the app): forgets the files
+   * saved and moved away this session, since the folders now show them as they are.
+   */
+  resetSession(): void {
+    this.saved.replaceFiles(new Map());
+    this.gone.clear();
   }
 
   /** Files moved away this session (a renamed DT1's old name): no longer there for the editor either. */

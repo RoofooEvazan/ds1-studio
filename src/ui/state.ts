@@ -28,6 +28,8 @@ export interface Visibility {
   missing: boolean;
   grid: boolean;
   walkable: boolean;
+  /** A colour-coded overview over the map: where players can walk, or where random monsters can spawn. */
+  overview: import('../game/mapOverlays').OverlayKind | null;
   animate: boolean;
   sprites: boolean;
   rooms: boolean;
@@ -57,6 +59,7 @@ export const DEFAULT_VISIBILITY: Visibility = {
   missing: true,
   grid: false,
   walkable: false,
+  overview: null,
   animate: true,
   sprites: true,
   rooms: false,

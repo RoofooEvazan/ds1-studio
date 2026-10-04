@@ -229,8 +229,13 @@ export const SubTileFlag = {
  * Combined sub-tile flags per cell, like WinDS1's walkable overlay: the flags of every floor and wall tile in the cell
  * OR'd together, plus "unwalkable" for cells whose floor/wall has prop3 bit 0x02 or which have no floor at all.
  * Result index: (cy * width + cx) * 25 + sy * 5 + sx, with (sx, sy) sub-tile coordinates inside the cell.
+ *
+ * `game` = as the game builds its collision instead (D2Common COLLISION_AllocRoomCollisionGrid: every sub-tile starts
+ * free and only tiles add flags), so a cell without a floor blocks nothing by itself. With `blank` (LvlPrest
+ * FillBlanks=1, see blankFillFlags), cells without a first-layer floor get that hidden blank tile's flags, as
+ * DRLGROOMTILE_LoadInitRoomTiles adds it.
  */
-export function walkability(ds1: Ds1, scene: Scene, lib?: TileLibrary): Uint8Array {
+export function walkability(ds1: Ds1, scene: Scene, lib?: TileLibrary, game?: { blank: Uint8Array | null }): Uint8Array {
   const { width, height } = ds1;
   const out = new Uint8Array(width * height * 25);
   const addFlags = (cellX: number, cellY: number, f: Uint8Array) => {
@@ -263,8 +268,27 @@ export function walkability(ds1: Ds1, scene: Scene, lib?: TileLibrary): Uint8Arr
     const fillLOS = layers.some((l) => l[i].prop1 !== 0 && (l[i].prop3 & 0x01) !== 0);
     if (fillLOS) for (let k = 0; k < 25; k++) out[i * 25 + k] |= SubTileFlag.BlockJump;
     const noFloor = ds1.floors.every((l) => l[i].prop1 === 0);
-    if (marked || noFloor) for (let k = 0; k < 25; k++) out[i * 25 + k] |= SubTileFlag.BlockWalk;
+    if (marked || (noFloor && !game)) for (let k = 0; k < 25; k++) out[i * 25 + k] |= SubTileFlag.BlockWalk;
+    if (game?.blank && (ds1.floors[0]?.[i].prop1 ?? 0) === 0) addFlags(i % width, Math.floor(i / width), game.blank);
   }
+  return out;
+}
+
+/**
+ * The flags of the hidden blank tile the game puts under cells without a first-layer floor when LvlPrest FillBlanks=1
+ * (DRLGROOMTILE_LoadInitRoomTiles): floor style 30, sequence 0 (1 in the Arcane Sanctuary, level 74), from the
+ * level's DT1s; without one, DRLGROOMTILE_GetTileCache falls back to the first orientation-10 0/0 tile. All 0 (walkable)
+ * when there is neither. The editor's built-in special-tile pictures aren't game tiles and don't count.
+ */
+export function blankFillFlags(lib: TileLibrary, levelId: number): Uint8Array {
+  const real = (o: number, m: number, s: number) => lib.variants(o, m, s).filter((t) => !lib.sourceOf(t)?.path.startsWith('builtin/'));
+  const blank = real(Orientation.Floor, 30, levelId === 74 ? 1 : 0);
+  const tiles = blank.length ? blank : real(Orientation.SpecialTile1, 0, 0).slice(0, 1);
+  // The game picks one variant at random: count a sub-tile blocked only if every variant blocks it.
+  const out = new Uint8Array(25);
+  if (!tiles.length) return out;
+  out.fill(0xff);
+  for (const t of tiles) for (let k = 0; k < 25; k++) out[k] &= t.subTileFlags[k];
   return out;
 }
 

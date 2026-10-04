@@ -95,6 +95,8 @@ export function LayersPanel({ map, scene, visibility: v, onChange, keys }: { map
         <Toggle label="Rooms (8×8)" hotkey={keys['view.rooms']} swatch="rgb(90,200,255)" checked={v.rooms} onChange={(x) => set({ rooms: x })} />
         <Toggle label="Grid" hotkey={keys['view.grid']} checked={v.grid} onChange={(x) => set({ grid: x })} />
         <Toggle label="Walkability" hotkey={keys['view.walkable']} swatch="linear-gradient(90deg, rgb(255,176,40) 50%, rgb(255,60,70) 50%)" checked={v.walkable} onChange={(x) => set({ walkable: x })} />
+        <Toggle label="Walkable overview" swatch="linear-gradient(90deg, rgb(60,210,90) 50%, rgb(235,50,50) 50%)" checked={v.overview === 'walkable'} onChange={(x) => set({ overview: x ? 'walkable' : null })} />
+        <Toggle label="Monster spawns" swatch="linear-gradient(90deg, rgb(60,210,90) 34%, rgb(70,150,255) 34% 67%, rgb(190,90,255) 67%)" checked={v.overview === 'spawn'} onChange={(x) => set({ overview: x ? 'spawn' : null })} />
         <Toggle label="Level light" swatch="linear-gradient(90deg, #2a2a2a, #d8c9a0)" checked={v.light} onChange={(x) => set({ light: x })} />
         {scene.animated && <Toggle label="Animate floors" checked={v.animate} onChange={(x) => set({ animate: x })} />}
       </div>

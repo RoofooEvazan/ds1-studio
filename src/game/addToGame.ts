@@ -335,7 +335,10 @@ export function planAddToGame(tables: { prest: TxtTableDoc; levels: TxtTableDoc;
     const entry = getCell(levels, row, 'EntryFile').trim();
     if (levelAct(input.levelId) !== 4 || !entry) set('Levels.txt', row, label, 'EntryFile', DEFAULT_ENTRY_FILE, `the loading screen (${ENTRY_IMAGE_DIR}${DEFAULT_ENTRY_FILE}.dc6, Harrogath's)`);
     targetLevel = newLevelId;
-    if (pal !== 4) warnings.push(`The level is in Act 5 but uses the ${['Act 1', 'Act 2', 'Act 3', 'Act 4', 'Act 5'][pal]} palette (Pal ${pal}), because ${typeName}'s tiles were drawn for that act.`);
+    if (pal !== 4)
+      warnings.push(
+        `The level is in Act 5 but uses the ${['Act 1', 'Act 2', 'Act 3', 'Act 4', 'Act 5'][pal]} palette (Pal ${pal}), because ${typeName}'s tiles were drawn for that act. In PD2, new levels in the Act 5 slot were seen drawn with the Act 5 palette whatever Pal said: if the tiles show bright green, blue or red specks in game, convert them to the Act 5 palette.`,
+      );
   } else {
     if (num(getCell(levels, levelRow, 'DrlgType')) !== 2)
       return `${levelName(input.levelId)} is built at random (DrlgType ${getCell(levels, levelRow, 'DrlgType')}), not from one map, so it can't use this map. Make a new level instead.`;
@@ -593,6 +596,11 @@ export function verifyInGame(
      * so any Pal is right). Given, it replaces the level type's Act column as the palette the level should use.
      */
     tilesAct?: number | null;
+    /**
+     * Whether a level is new to the mod (its Id isn't in the mod's own MPQ copy of Levels.txt). PD2 was seen drawing new
+     * levels in the Act 5 slot with the Act 5 palette whatever their Pal said.
+     */
+    isNewLevel?: (levelId: number) => boolean;
   } = {},
 ): TableIssue[] {
   const { prest, levels, types } = tables;
@@ -734,7 +742,18 @@ export function verifyInGame(
       });
     const tilesAct = opts.tilesAct !== undefined ? opts.tilesAct : typeAct(types, num(getCell(levels, lRow, 'LevelType')));
     const pal = num(getCell(levels, lRow, 'Pal'));
-    if (tilesAct !== null && pal !== tilesAct)
+    if (levelAct(levelId) === 4 && opts.isNewLevel?.(levelId)) {
+      // Observed in PD2: such a level is drawn with the Act 5 palette, so Pal can't make another act's tiles right.
+      // Only said when the tiles' art (not the level type's Act column) shows the act they were drawn for.
+      const artAct = opts.tilesAct;
+      if (artAct !== undefined && artAct !== null && artAct !== 4)
+        out.push({
+          severity: 'warning',
+          title: `Level ${levelId} is a new level in the Act 5 slot, but its tiles are Act ${artAct + 1} tiles`,
+          detail: `Seen in PD2: new levels in the Act 5 slot (Ids past the mod's own Levels.txt) were drawn with the Act 5 palette whatever Pal said. Tiles drawn for another act showed bright green, blue and red specks there even with Pal set to that act, and converting the DT1s to the Act 5 palette fixed it. Make this level's tiles for the Act 5 palette (Pal 4).`,
+          columns: [{ table: 'Levels', col: 'Pal' }],
+        });
+    } else if (tilesAct !== null && pal !== tilesAct)
       out.push({
         severity: 'warning',
         title: `Level ${levelId} uses the Act ${pal + 1} palette but its tiles are Act ${tilesAct + 1} tiles`,

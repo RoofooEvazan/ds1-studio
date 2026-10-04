@@ -1,4 +1,4 @@
-import { TOOLS, type McpSession } from './session';
+import { errorText, TOOLS, type McpSession } from './session';
 
 /**
  * A minimal Model Context Protocol server (JSON-RPC 2.0, one message per line): initialize, tools/list, tools/call,
@@ -52,6 +52,6 @@ export async function handleLine(session: () => Promise<McpSession>, line: strin
         return error(-32601, `Method not found: ${msg.method}`);
     }
   } catch (e) {
-    return isNotification ? null : error(-32603, (e as Error).message);
+    return isNotification ? null : error(-32603, errorText(e));
   }
 }

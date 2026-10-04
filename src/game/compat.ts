@@ -2,13 +2,15 @@ import { automapLevelFor, GAME_AUTOMAP_LEVELS, parseAutomap, unknownAutomapLevel
 import { decodeTile, Orientation } from '../formats/dt1';
 import { parseTxt, type TxtTable } from '../formats/txt';
 import { SubTileFlag, walkability, type Scene } from '../render/scene';
-import { normalizePath } from '../vfs/vfs';
+import { MpqSource, normalizePath } from '../vfs/vfs';
 import { GameData, TileLibrary } from './GameData';
 import type { OpenMap } from './openMap';
 import { isBuiltinPath } from './specialTiles';
+import { overlayFlags, openVoid } from './mapOverlays';
+import { presetRooms, roomAt } from './spawnRegions';
 import { clashingDt1s, duplicateDt1s, mixedVersions } from './duplicateDt1s';
 import { findPops, popProblems } from './pops';
-import { ENTRY_IMAGE_DIR, TOWNS, verifyInGame } from './addToGame';
+import { ENTRY_IMAGE_DIR, levelAct, TOWNS, verifyInGame } from './addToGame';
 import { ACT_TOWNS, exitProblems } from './exits';
 import { loadTable } from './levelTables';
 import { invalidAutomapRows } from './automapSafety';
@@ -19,6 +21,8 @@ import { neededDt1s } from './importMatch';
 import { drawnPalettes, guessDrawnAct } from './openMap';
 import type { Palette } from '../formats/palette';
 import { blankObjectNames, nameStringsWrite, readStringTables } from './objectStrings';
+import { directIdsOnGameRows, looseOnlyRows, modArchiveTable, objectRows, unpairedPads } from './objectChecks';
+import { partlyNoSpawnRooms } from './spawnRegions';
 
 export type Severity = 'error' | 'warning' | 'info' | 'ok';
 
@@ -127,6 +131,9 @@ async function table(gd: GameData, name: string): Promise<TxtTable | null> {
 export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap?: { pieces: AutomapPiece[] }, kept?: (key: string) => boolean): Promise<CheckResult[]> {
   const out: CheckResult[] = [];
   const { ds1, lib } = map;
+  // The act a library's folder names: only trusted for the game's and the mod's archived files. A loose file in an
+  // act folder may have been made or recoloured for another palette (PD2's new Act 5 levels), so its art decides.
+  const folderAct = (path: string) => (gd.fs.sources.find((s) => s.has(path)) instanceof MpqSource ? dt1Act(path) : null);
 
   // --- Tiles -------------------------------------------------------------------------------------------------------
   const notFound = lib.loaded.filter((l) => !l.found && !isBuiltinPath(l.path));
@@ -329,17 +336,22 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
         if (!l.found || isBuiltinPath(l.path)) continue;
         const dt1 = await gd.dt1(l.path).catch(() => null);
         if (!dt1 || !dt1.tiles.some((t) => decodeTile(t)?.pixels.some((px) => px && !a0.usable[px]))) continue;
-        const act = dt1Act(l.path) ?? guessDrawnAct(dt1.tiles, await drawnPalettes(gd));
+        const act = folderAct(l.path) ?? guessDrawnAct(dt1.tiles, await drawnPalettes(gd));
         if (act === null || act > 4) return undefined;
         acts.add(act);
       }
       return acts.size === 0 ? null : acts.size === 1 ? [...acts][0] : undefined;
     })();
+    // Levels the mod's own MPQ doesn't list (added in a loose Levels.txt): PD2 draws new Act 5 ones in the Act 5 palette.
+    const modLevels = await modArchiveTable(gd.fs, 'Levels.txt');
+    const modLevelIds = modLevels && !modLevels.inUse ? new Set(modLevels.table.rows.map((r) => Number(r['Id']))) : null;
+    const isNewLevel = (id: number) => !!modLevelIds && !modLevelIds.has(id);
     const issues = p2 && l2 && t2
       ? verifyInGame({ prest: p2, levels: l2, types: t2 }, map.path.replace(/^data\/global\/tiles\//i, ''), ds1, {
           entryImageExists: (name) => !!gd.fs.locate(normalizePath(`${ENTRY_IMAGE_DIR}${name}.dc6`)),
           kept,
           tilesAct,
+          isNewLevel,
         })
       : [];
     // Every too-long path together, so one dialog renames them all.
@@ -388,7 +400,8 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
         // (red, purple, cyan patches). Act 0 libraries use only the colours every act shares.
         {
           const pal = Number(level['Pal']);
-          const palAct = pal === 5 ? 4 : Math.min(4, Math.max(0, pal));
+          // A new level in the Act 5 slot: PD2 was seen drawing it with the Act 5 palette whatever its Pal.
+          const palAct = levelAct(levelId) === 4 && isNewLevel(levelId) ? 4 : pal === 5 ? 4 : Math.min(4, Math.max(0, pal));
           const a0 = await loadAct0Palette(gd.fs).catch(() => null);
           let pals: Palette[] | null = null;
           const actPalettes = async () => (pals ??= await drawnPalettes(gd));
@@ -399,7 +412,7 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
               const dt1 = await gd.dt1(l.path).catch(() => null);
               if (!dt1) continue;
               // Drawn for this level's act (by its folder, else by its art): its colours are right here.
-              if ((dt1Act(l.path) ?? guessDrawnAct(dt1.tiles, await actPalettes())) === palAct) continue;
+              if ((folderAct(l.path) ?? guessDrawnAct(dt1.tiles, await actPalettes())) === palAct) continue;
               let bad = 0, all = 0;
               for (const t of dt1.tiles) {
                 const img = decodeTile(t);
@@ -548,6 +561,28 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
           : [{ kind: 'open-table', label: 'Open LvlPrest.txt (or use Map → Roof hiding → Set Pops)', table: 'LvlPrest.txt', key: prestRow?.['Name'] }],
     });
 
+  // --- Open edges: void the game lets players walk into ------------------------------------------------------------
+  const open = openVoid(ds1, overlayFlags(ds1, scene, lib, map.resolution.preset));
+  if (open.edgeCells.length) {
+    const rooms = presetRooms(ds1.width, ds1.height);
+    const byRoom = new Map<string, { x: number; y: number }[]>();
+    for (const c of open.edgeCells) {
+      const r = roomAt(rooms, c.x, c.y);
+      const key = r ? `room ${r.x0},${r.y0}-${r.x0 + r.w - 1},${r.y0 + r.h - 1}` : 'last row/column';
+      byRoom.set(key, [...(byRoom.get(key) ?? []), c]);
+    }
+    const list = (cells: { x: number; y: number }[]) => cells.slice(0, 12).map((c) => `${c.x},${c.y}`).join(' ') + (cells.length > 12 ? ` … (+${cells.length - 12})` : '');
+    out.push({
+      severity: 'warning',
+      area: 'Map',
+      title: `Walkable edge borders void (players can walk off): ${open.edgeCells.length} cells in ${byRoom.size} room${byRoom.size === 1 ? '' : 's'}`,
+      detail:
+        'In game a cell without a floor blocks nothing unless a tile there does (with LvlPrest FillBlanks, the hidden blank floor 30 the game puts there), so players walk off the art into the void. Put blocking tiles or walls along these edges, or a blocking blank tile in the level’s DT1s. ' +
+        [...byRoom].map(([room, cells]) => `${room}: ${cells.length} (${list(cells)})`).join('; '),
+      cells: open.edgeCells,
+    });
+  }
+
   // --- Objects -----------------------------------------------------------------------------------------------------
   const walk = walkability(ds1, scene, lib);
   const W = ds1.width * 5;
@@ -634,6 +669,48 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
   const stacked = stackedSpots.length;
   if (!offMap.length && !blocked.length && !stacked) out.push({ severity: 'ok', area: 'Objects', title: `${ds1.objects.length} objects placed on valid ground` });
 
+  // objects.txt rows the map's objects resolve to.
+  const objTable = objectRows(await table(gd, 'objects.txt'));
+  const rowOf = (o: { type: number; id: number }) => gd.objectRowNumber(ds1.act, o.type, o.id);
+  const at = (indices: number[]) => indices.map((i) => ({ x: Math.floor(ds1.objects[i].x / 5), y: Math.floor(ds1.objects[i].y / 5) }));
+  // Ids of 150+ on portal / quest rows are the likely "next act" mistakes; other clickable rows are listed, quieter.
+  const direct = directIdsOnGameRows(ds1.objects, objTable);
+  for (const group of [direct.filter((d) => d.role !== 'operable'), direct.filter((d) => d.role === 'operable')]) {
+    if (!group.length) continue;
+    const serious = group[0].role !== 'operable';
+    out.push({
+      severity: serious ? 'warning' : 'info',
+      area: 'Objects',
+      title: `${group.length} object${group.length === 1 ? '' : 's'} with an id of 150 or more ${group.length === 1 ? 'is' : 'are'} ${serious ? [...new Set(group.map((d) => d.role))].join(' / ') : 'operable'} object${group.length === 1 ? '' : 's'}: ${[...new Set(group.map((d) => `${ds1.objects[d.index].id} = ${d.name}`))].join(', ')}`,
+      detail: `The game reads an object id of 150 or more as the objects.txt row id − 150 itself, in any act (not as the next act’s object), and these rows are ones the game runs code for${serious ? ': a stray Town portal or Cairn Stone can break warps or crash the game' : ' (players can click them)'}. Check each is the object you meant; a later act’s object is placed as 150 + its objects.txt row, an earlier act’s with a negative id.`,
+      cells: at(group.map((d) => d.index)),
+    });
+  }
+  const modObjects = await modArchiveTable(gd.fs, 'objects.txt');
+  if (modObjects && !modObjects.inUse) {
+    const loose = looseOnlyRows(ds1.objects, rowOf, objTable, objectRows(modObjects.table));
+    if (loose.length) {
+      const rows = [...new Map(loose.map((l) => [l.row, l])).values()];
+      out.push({
+        severity: 'warning',
+        area: 'Objects',
+        title: `${loose.length} object${loose.length === 1 ? ' uses an objects.txt row' : 's use objects.txt rows'} only the loose objects.txt has`,
+        detail: `${rows.map((l) => `row ${l.row} "${l.loose}" (${l.archived ? `"${l.archived}" in ${modObjects.label}` : `not in ${modObjects.label}`})`).join('; ')}. Seen in PD2: the game used the objects.txt inside ${modObjects.label} and ignored the loose one, so objects on such rows showed junk graphics or crashed the game. Use rows ${modObjects.label}'s table has, or test in game.`,
+        cells: at(loose.map((l) => l.index)),
+        columns: [{ table: 'objects', col: 'Token' }],
+      });
+    }
+  }
+  const pads = unpairedPads(ds1.objects, rowOf, objTable);
+  if (pads.length)
+    out.push({
+      severity: 'warning',
+      area: 'Objects',
+      title: `${pads.length} teleport pad${pads.length === 1 ? ' has' : 's have'} no partner nearby`,
+      detail: 'A teleportation pad (objects.txt OperateFn 27) takes players to another pad of the same row in its own 8×8 room or a touching one (40 sub-tiles). Place its partner within that range.',
+      cells: at(pads),
+    });
+
   // Names shown on hover: an objects.txt Name whose string is missing or only spaces shows as an empty box in game.
   const nameKeys = ds1.objects.filter((o) => o.type === 2).map((o) => gd.objectNameKey(ds1.act, o.type, o.id)).filter((k): k is string => !!k);
   if (nameKeys.length) {
@@ -649,6 +726,23 @@ export async function checkMap(gd: GameData, map: OpenMap, scene: Scene, automap
         fixes: write ? [{ kind: 'table-write', label: `Add ${blanks.map((b) => `"${b.suggested}"`).join(', ')} to patchstring.tbl`, writes: [write] }] : undefined,
       });
     }
+  }
+
+  // --- Monster spawning: rooms made no-spawn (region seeds with a hidden floor 1) that still have spawning regions ----
+  const partly = partlyNoSpawnRooms(ds1);
+  if (partly.length) {
+    const logicals = prestRow ? Number(prestRow['Logicals']) === 1 : null;
+    out.push({
+      severity: 'warning',
+      area: 'Map',
+      title: `${partly.length} room${partly.length === 1 ? ' is' : 's are'} only partly no-spawn: monsters can still spawn in ${partly.reduce((n, p) => n + p.open.length, 0)} region${partly.reduce((n, p) => n + p.open.length, 0) === 1 ? '' : 's'}`,
+      detail: `${partly
+        .slice(0, 12)
+        .map((p) => `room ${p.rr.room.x0},${p.rr.room.y0}: seeds ${p.open.map((r) => `${r.seed.x},${r.seed.y}`).join(' ')}`)
+        .join('; ')}${partly.length > 12 ? '; …' : ''}. Each 8×8 room is split into regions by the first wall layer; a region gets no random monsters only when its first cell (seed) has a hidden floor1 tile. Some regions of these rooms have one, these don't: give every region seed of the room a hidden floor1 tile to make the whole room no-spawn.${logicals === false ? ' Also, the map’s LvlPrest row has Logicals 0, so the game doesn’t use regions at all: set Logicals to 1.' : ''}`,
+      cells: partly.flatMap((p) => p.open.map((r) => r.seed)),
+      columns: logicals === false ? [{ table: 'LvlPrest', col: 'Logicals' }] : undefined,
+    });
   }
 
   // --- Automap ------------------------------------------------------------------------------------------------------

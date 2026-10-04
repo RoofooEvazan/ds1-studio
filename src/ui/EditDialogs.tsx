@@ -4,6 +4,7 @@ import { sharedTiles, tileKeys } from '../game/duplicateDt1s';
 import { missingTablesWarning, tableCoverage } from '../game/mapPackage';
 import type { Palette } from '../formats/palette';
 import type { CellRect } from '../game/clipboard';
+import { OVERLAY_NAMES, type OverlayKind } from '../game/mapOverlays';
 import { findTile, keyText, replaceEdits, type TileKey } from '../game/editTools';
 import type { TileLibrary } from '../game/GameData';
 import { layerLabel, type CellEdit, type LayerRef, type MapDocument } from '../game/MapDocument';
@@ -140,13 +141,15 @@ interface ExportImageProps {
   height: number;
   selection: CellRect | null;
   busy: boolean;
-  onExport: (o: { area: CellRect | null; scale: number; objects: boolean }) => void;
+  /** The overview shown on the map now: the image gets it too unless another is picked. */
+  overview: OverlayKind | null;
+  onExport: (o: { area: CellRect | null; scale: number; objects: boolean; overview: OverlayKind | null }) => void;
   onClose: () => void;
 }
 
 const SCALES = [1, 0.5, 0.25, 0.125];
 
-export function ExportImageDialog({ width, height, selection, busy, onExport, onClose }: ExportImageProps) {
+export function ExportImageDialog({ width, height, selection, busy, overview: shown, onExport, onClose }: ExportImageProps) {
   const [area, setArea] = useState<'map' | 'selection'>(selection ? 'selection' : 'map');
   const rect = area === 'selection' && selection ? selection : { x0: 0, y0: 0, x1: width - 1, y1: height - 1 };
   const fits = (s: number) => {
@@ -155,12 +158,13 @@ export function ExportImageDialog({ width, height, selection, busy, onExport, on
   };
   const [scale, setScale] = useState(() => SCALES.find(fits) ?? 0.125);
   const [objects, setObjects] = useState(true);
+  const [overview, setOverview] = useState<OverlayKind | null>(shown);
   const chosen = fits(scale) ? scale : (SCALES.find(fits) ?? 0.125);
   const [w, h] = exportSize(rect, chosen);
   return (
     <Modal title="Export image" onClose={onClose}>
       <p className="muted small">
-        Saves the map as a PNG, drawn with the layers currently shown. <HelpTip text="Tiles and object sprites are drawn solid and shadows as translucent black; glows and fog are left out. Special-tile markers and overlays (grid, walkability…) aren't included." />
+        Saves the map as a PNG, drawn with the layers currently shown. <HelpTip text="Tiles and object sprites are drawn solid and shadows as translucent black; glows and fog are left out. Special-tile markers and overlays (grid, walkability…) aren't included; a colour overview below is, with its legend." />
       </p>
       <div className="rp-options">
         <label>
@@ -181,6 +185,14 @@ export function ExportImageDialog({ width, height, selection, busy, onExport, on
       <label className="small">
         <input type="checkbox" checked={objects} onChange={(e) => setObjects(e.target.checked)} /> include objects and NPCs
       </label>
+      <div className="rp-options">
+        <span className="muted small">Colour</span>
+        {([null, 'walkable', 'spawn'] as const).map((k) => (
+          <label key={k ?? 'none'} title={k === 'walkable' ? 'Where players can walk, sub-tile by sub-tile' : k === 'spawn' ? 'Where random monsters can spawn, and why not elsewhere' : 'Just the map'}>
+            <input type="radio" checked={overview === k} onChange={() => setOverview(k)} /> {k ? OVERLAY_NAMES[k].toLowerCase() : 'nothing'}
+          </label>
+        ))}
+      </div>
       <p className="small">
         {w.toLocaleString()} × {h.toLocaleString()} pixels
       </p>
@@ -188,7 +200,7 @@ export function ExportImageDialog({ width, height, selection, busy, onExport, on
         <button className="btn" onClick={onClose}>
           Cancel
         </button>
-        <button className="btn primary" disabled={busy} onClick={() => onExport({ area: area === 'selection' ? selection : null, scale: chosen, objects })}>
+        <button className="btn primary" disabled={busy} onClick={() => onExport({ area: area === 'selection' ? selection : null, scale: chosen, objects, overview })}>
           {busy ? 'Drawing…' : 'Export PNG…'}
         </button>
       </div>

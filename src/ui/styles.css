@@ -794,6 +794,9 @@ kbd { display: inline-block; min-width: 22px; padding: 2px 7px; font: 600 11px/1
 .dt1-library .dtt { flex: 1; min-height: 0; height: auto; max-height: none; }
 .dt1l-side { display: flex; flex-direction: column; gap: 6px; min-height: 0; }
 .dt1l-add { display: flex; gap: 6px; flex-wrap: wrap; }
+.dt1l-order { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
+.dt1l-order-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.dt1l-order .error-text { margin: 0; }
 .dt1-library .dt1v { flex: 1; min-height: 0; }
 .dt1-library .dt1v-body { flex: 1; min-height: 0; grid-template-columns: 1fr minmax(320px, 36%); }
 .dt1-library .dt1v-grid { height: auto; max-height: none; min-height: 0; overflow-y: auto; }
@@ -1120,6 +1123,7 @@ footer .status-zoom { color: inherit; font: inherit; padding: 0; }
 .browser-pinned .browser-file .muted { margin-left: 6px; }
 .browser-pin { margin-left: 6px; font-size: 10px; opacity: 0.7; }
 .dte-note { margin: 4px 0 6px; }
+.dte-save-error { flex: 1; align-self: center; }
 .og-act { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .dte-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--error) 45%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--error) 8%, transparent); font-size: 12px; }
 .custom-object-preview { display: flex; justify-content: center; padding: 8px; margin: 6px 0; background: var(--panel-2, #15171a); border-radius: 6px; min-height: 60px; }

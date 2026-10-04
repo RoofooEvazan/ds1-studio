@@ -506,3 +506,32 @@ export function planCombine(tables: LevelTables, mapPath: string, dt1s: string[]
   const freed = removeTypeSlots(tables, use.typeId, remove);
   return { writes: mergeWrites(writesOf(tables, freed.tables, freed.summary), syncTablesIn(freed.tables, mapPath, next, fallbackTypeId, true)), dt1s: next };
 }
+
+/**
+ * Swaps two of the map's libraries in load order. The game loads a level's DT1s in the order of its level type's File
+ * slots (the first one loaded wins when two have a tile of the same number), so the two slots trade places in
+ * LvlTypes and the Dt1Mask bits of every LvlPrest row of the type's levels follow: each map keeps the same libraries.
+ */
+export function planSwapLibraries(tables: LevelTables, mapPath: string, a: string, b: string, fallbackTypeId?: number): TableWrite[] {
+  const use = typeSlotUse(tables, mapPath, fallbackTypeId);
+  if (!use) throw new Error('The map has no level type.');
+  if (!use.allPreset) throw new Error(`Level type "${use.name}" is also used by maze or outdoor levels, which pick tiles by slot: its load order can't be changed safely.`);
+  const slotOf = (p: string) => use.slots.find((s) => s.mine && s.path === normalizePath(p))?.slot;
+  const sa = slotOf(a), sb = slotOf(b);
+  if (!sa || !sb) throw new Error(`${tilesRel(sa ? b : a)} isn't one of the map's File slots in LvlTypes.txt.`);
+  const { types, prest } = tables;
+  const va = getCell(types, use.typeRow, `File ${sa}`), vb = getCell(types, use.typeRow, `File ${sb}`);
+  const t = setCell(setCell(types, use.typeRow, `File ${sa}`, vb), use.typeRow, `File ${sb}`, va);
+  const summary = [`Type ${use.typeId} "${use.name}": ${tilesRel(slotFile(types, use.typeRow, sa))} (File ${sa}) and ${tilesRel(slotFile(types, use.typeRow, sb))} (File ${sb}) trade places`];
+  const ba = 1 << (sa - 1), bb = 1 << (sb - 1);
+  let p = prest;
+  for (const r of rowsOfType(tables, use.typeId)) {
+    const old = num(getCell(prest, r, 'Dt1Mask')) >>> 0;
+    const mask = ((old & ~(ba | bb)) | (old & ba ? bb : 0) | (old & bb ? ba : 0)) >>> 0;
+    if (mask !== old) {
+      p = setCell(p, r, 'Dt1Mask', String(mask));
+      summary.push(`"${getCell(prest, r, 'Name')}": Dt1Mask ${old} → ${mask}`);
+    }
+  }
+  return writesOf(tables, { ...tables, types: t, prest: p }, summary);
+}

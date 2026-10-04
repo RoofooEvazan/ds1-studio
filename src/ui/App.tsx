@@ -122,7 +122,7 @@ import { renameInLvlPrest, renameInLvlTypes, suggestShortPath } from '../game/dt
 import { ChangeLevelTypeDialog, LevelTypeFullDialog, RegisterMapDialog, type TableWrite } from './LevelTools';
 import { CubeRecipeDialog } from './CubeRecipe';
 import { MapRecipeRibbon } from './MapRecipeRibbon';
-import { loadLevelTables, loadTable, planCombine, planFreeSlots, setPopSettings, SlotsFullError, syncLevelTables } from '../game/levelTables';
+import { loadLevelTables, loadTable, planCombine, planFreeSlots, planSwapLibraries, setPopSettings, SlotsFullError, syncLevelTables } from '../game/levelTables';
 import { applyPopPlan, findPops, planPops, popTargets, removePops, type PopArea } from '../game/pops';
 import { AUTOMAP_CODES, applyAutomapEdits, applyAutomapSuggestions, automapColors, referenceTiles, type AutomapColors, type ReferenceTile, AUTOMAP_DC6, AUTOMAP_TXT, automapLevelFor, automapPieces, parseAutomap, parseAutomapCels, setAutomapCel, suggestAutomap, withSuggestions, type AutomapEdit, type AutomapPiece, type AutomapSuggestion, type AutomapTable } from '../game/automap';
 import { getCell, parseTxtTable, serializeTxtTable, setCell, type TxtTableDoc } from '../formats/txtTable';
@@ -2141,6 +2141,30 @@ export function App() {
       return newPath;
     },
     [gd, map, data, writeFiles, applyDt1s, notify],
+  );
+
+  /**
+   * Tile libraries: moves one of the map's libraries up or down in load order (the first loaded wins when two have a
+   * tile of the same number). A map in the game trades File slots with its neighbour in LvlTypes (every map of the type
+   * keeps its libraries); a map not in the game just lists them in the new order.
+   */
+  const moveLibrary = useCallback(
+    async (path: string, dir: -1 | 1) => {
+      if (!gd || !map) return;
+      const libs = map.lib.loaded.filter((l) => !isBuiltinPath(l.path)).map((l) => l.path);
+      const i = libs.findIndex((p) => normalizePath(p) === normalizePath(path));
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= libs.length) return;
+      const order = libs.slice();
+      [order[i], order[j]] = [order[j], order[i]];
+      if (map.resolution.preset) {
+        const writes = planSwapLibraries(await loadLevelTables(gd.fs), map.path, gd.fs.exactPath(libs[i]) ?? libs[i], gd.fs.exactPath(libs[j]) ?? libs[j], map.resolution.lvlType?.id);
+        if (writes.length) await writeFiles(writes);
+      }
+      await applyDt1s(order, { keepOpen: true, strict: true, label: 'Change tile library load order' });
+      notify(`${path.split('/').pop()} moved ${dir < 0 ? 'up' : 'down'} in load order (now ${j + 1} of ${libs.length}).`);
+    },
+    [gd, map, writeFiles, applyDt1s, notify],
   );
 
   /** Which the hide-area dialog sets up by default: roof or wall hiding (the same game feature). */
@@ -5088,6 +5112,7 @@ export function App() {
           gd={data.gd}
           usage={dt1Usage}
           onApply={(p, o) => void addLibraries(p, o?.toAct0 ?? [])}
+          onMove={canWrite || !map.resolution.preset ? moveLibrary : null}
           onCreateCustom={canWrite ? createCustomDt1 : null}
           onImportFiles={canWrite ? (mode) => void pickImport('dt1', mode) : null}
           reveal={revealDt1}

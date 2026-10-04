@@ -275,6 +275,8 @@ interface LibraryProps extends Omit<Props, 'usage'> {
   onImportFiles: ((mode: 'files' | 'folders') => void) | null;
   /** DT1s just imported: the first is shown, those the map does not load yet come chosen. */
   reveal: string[] | null;
+  /** Moves one of the map's libraries up (-1) or down (+1) in load order (null: no writable mod folder). */
+  onMove?: ((path: string, dir: -1 | 1) => Promise<void>) | null;
 }
 
 /**
@@ -282,7 +284,7 @@ interface LibraryProps extends Omit<Props, 'usage'> {
  * through (hover to enlarge). Either whole libraries are chosen and added to the open map (like the Tile libraries
  * dialog), or single tiles from any of them are ticked and built into a new custom DT1 (see game/customDt1.ts).
  */
-export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onImportFiles, reveal, onClose }: LibraryProps) {
+export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onImportFiles, reveal, onMove, onClose }: LibraryProps) {
   const current = useMemo(() => map.lib.loaded.filter((l) => !isBuiltinPath(l.path)).map((l) => l.path), [map]);
   const inMap = useMemo(() => new Set(current.map(normalizePath)), [current]);
   const all = useMemo(() => gd.fs.list((p) => p.endsWith('.dt1') && p.startsWith('data/global/tiles/')), [gd]);
@@ -296,6 +298,9 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
   const [addTo, setAddTo] = useState<string | null>(null);
   /** A library of the map waiting for "Remove from the map?" (Delete). */
   const [removing, setRemoving] = useState<string | null>(null);
+  /** Moving a library in load order: busy, and what went wrong. */
+  const [moving, setMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
   // Colours: the library's own act (from its folder), the map's act, or Act 0 (magenta = colours that change by act).
   // A map shown in the Act 0 colours (a new map) opens the library in them too.
   const [palMode, setPalMode] = useState<'own' | 'map' | 'act0'>(map.paletteAct === ACT0_PALETTE ? 'act0' : 'own');
@@ -362,6 +367,16 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
   const isChosen = (p: string) => chosen.some((c) => normalizePath(c) === normalizePath(p));
   const toggle = (p: string) => setChosen((c) => (isChosen(p) ? c.filter((x) => normalizePath(x) !== normalizePath(p)) : [...c, p]));
   const selInMap = selected && inMap.has(normalizePath(selected));
+  /** The selected library's place in the map's load order (-1: not loaded). */
+  const loadIndex = selInMap ? current.findIndex((c) => normalizePath(c) === normalizePath(selected)) : -1;
+  const move = (dir: -1 | 1) => {
+    if (!onMove || moving) return;
+    setMoving(true);
+    setMoveError(null);
+    onMove(selected, dir)
+      .catch((e) => setMoveError((e as Error).message))
+      .finally(() => setMoving(false));
+  };
   const pickedHere = useMemo(() => new Set(picks.filter((p) => normalizePath(p.dt1) === normalizePath(selected)).map((p) => p.index)), [picks, selected]);
   const pickLibraries = useMemo(() => [...new Set(picks.map((p) => p.dt1))], [picks]);
   const onPick = (indices: number[], on: boolean) =>
@@ -432,6 +447,25 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
                 return on ? [...rest, ...paths] : rest;
               })}
             />
+            {loadIndex >= 0 && !custom && (
+              <div className="dt1l-order">
+                <span className="small muted" title="The game loads the map's libraries in this order; when two have a tile with the same number, the first one loaded is drawn">
+                  Load order {loadIndex + 1} of {current.length}
+                </span>
+                <div className="dt1l-order-btns">
+                  <button className="btn small" disabled={!onMove || moving || loadIndex === 0} onClick={() => move(-1)} title="Load it one place earlier (it wins over the libraries after it for tiles with the same number)">
+                    ↑ Move up
+                  </button>
+                  <button className="btn small" disabled={!onMove || moving || loadIndex === current.length - 1} onClick={() => move(1)} title="Load it one place later">
+                    ↓ Move down
+                  </button>
+                  <button className="btn small danger" disabled={moving || !!removing} onClick={() => setRemoving(selected)} title="Take this library out of the map (Delete). Asks first.">
+                    Remove…
+                  </button>
+                </div>
+                {moveError && <p className="small error-text">{moveError}</p>}
+              </div>
+            )}
           </div>
           <div className="dt1l-view">
             {selected ? (
@@ -463,12 +497,7 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
               </select>
             </label>
             {selInMap && !custom && !removing && (
-              <p className="muted small">
-                This map already loads this library.{' '}
-                <button className="link small" onClick={() => setRemoving(selected)} title="Take this library out of the map (Delete)">
-                  Remove it from the map…
-                </button>
-              </p>
+              <p className="muted small">This map already loads this library: move it in load order or remove it under the library list.</p>
             )}
             {removing && (
               <div className="dt1l-remove" role="alert">

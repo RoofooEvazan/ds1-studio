@@ -2,7 +2,7 @@ import { viewPalette } from '../game/openMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isEmptyCell, type WallCell } from '../formats/ds1';
 import { decodeTile, Orientation, parseDt1, type Dt1, type TileImage } from '../formats/dt1';
-import { droppedPixelCount, setManyTilePixels } from '../formats/dt1Paint';
+import { cropToTile, droppedPixelCount, editedDt1Problem, setManyTilePixels } from '../formats/dt1Paint';
 import { cornerPartner, freeSub, mirrorRecord, rebuildRleRecord } from '../formats/dt1Blocks';
 import { buildDt1, changedRecord, dt1Records, recordInfo, type Dt1Record } from '../formats/dt1Write';
 import { readPng, toPaletteIndices, writeIndexedPng } from '../formats/png';
@@ -328,6 +328,12 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
       const painted = edits.size ? setManyTilePixels(bytes, [...edits].map(([tileIndex, image]) => ({ tileIndex, image }))) : bytes;
       const recoloured = changes ? recolorDt1(painted, remap, [...picked]) : painted;
       const out = settingsEdits.size ? writeTileSettings(recoloured, settingsEdits) : recoloured;
+      // Safeguard: the new DT1 must read back whole (same tiles, every picture drawable, untouched tiles unchanged)
+      // before it is written, above all over the original.
+      const touched = new Set([...edits.keys(), ...(changes ? picked : [])]);
+      const renumbered = [...settingsEdits.values()].some((c) => c.orientation !== undefined || c.mainIndex !== undefined || c.subIndex !== undefined);
+      const problem = editedDt1Problem(bytes, out, touched, renumbered);
+      if (problem) throw new Error(`Not saved, nothing was written: ${problem}. Please report this.`);
       const usesSaved = inMapLib && (overwrite || switchMap);
       const moves = remapMap && usesSaved && pendingMoves.size ? settledMoves(pendingMoves, tileNumbers(out)) : undefined;
       await onSave({ path: newPath, bytes: out, switchMap: switchMap && !overwrite && inMapLib, original: path, moves });
@@ -458,10 +464,11 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
         records[i] = rebuildRleRecord(records[i], image);
         useWorking(buildDt1(records), [i], `Imported the picture into tile ${t.orientation}/${t.mainIndex}/${t.subIndex}${colours}. Save to keep it.`);
       } else {
-        // Floors and roofs keep their diamond: the picture is painted into it.
+        // Floors and roofs keep their diamond: the picture is painted into it, and what lies outside is cut away now,
+        // so the tile shows what saving keeps.
         const dropped = droppedPixelCount(t, image);
-        setEdits((m) => new Map(m).set(i, image));
-        setOpNote(`Imported the picture into tile ${t.orientation}/${t.mainIndex}/${t.subIndex}${colours}${dropped ? `; ${dropped} pixels outside the tile's diamond were left out` : ''}. Save to keep it.`);
+        setEdits((m) => new Map(m).set(i, cropToTile(t, image)));
+        setOpNote(`Imported the picture into tile ${t.orientation}/${t.mainIndex}/${t.subIndex}${colours}${dropped ? `; ${dropped} pixels outside the tile's diamond were cut away (floor and roof tiles keep their diamond shape)` : ''}. Save to keep it.`);
       }
     });
 
@@ -855,6 +862,11 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
           </FloatingWindow>
         )}
         <div className="modal-actions" hidden={painting !== null || reassign !== null}>
+          {error && (
+            <span className="small error-text dte-save-error" role="alert">
+              {error}
+            </span>
+          )}
           <button className="btn" onClick={close}>
             Close
           </button>

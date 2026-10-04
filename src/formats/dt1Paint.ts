@@ -1,4 +1,4 @@
-import { parseDt1, type Dt1Block, type Dt1Tile, type TileImage } from './dt1';
+import { decodeTile, parseDt1, type Dt1Block, type Dt1Tile, type TileImage } from './dt1';
 
 /**
  * Pixel painting engine for DT1 tiles: writes an edited TileImage (as returned by decodeTile)
@@ -414,4 +414,40 @@ export function setTilePixels(
   options?: PaintOptions,
 ): Uint8Array {
   return setManyTilePixels(bytes, [{ tileIndex, image }], options);
+}
+
+/** `image` with the pixels outside the tile's paintable mask made transparent: what saving it will keep. */
+export function cropToTile(tile: Dt1Tile, image: TileImage): TileImage {
+  const mask = paintableMask(tile);
+  return { ...image, pixels: image.pixels.map((v, i) => (mask[i] ? v : 0)) };
+}
+
+/**
+ * Checks an edited DT1 before it is written over the one it came from: it must read back, with the same number of tiles
+ * and the same tile numbers (orientation, main, sub, unless `renumbered`), every tile that had a picture still having
+ * one, and the tiles not in `touched` keeping exactly their pictures. Returns what is wrong, or null.
+ */
+export function editedDt1Problem(before: Uint8Array, after: Uint8Array, touched: ReadonlySet<number>, renumbered = false): string | null {
+  let a, b;
+  try {
+    a = parseDt1(before);
+    b = parseDt1(after);
+  } catch (e) {
+    return `the new file doesn't read back (${(e as Error).message})`;
+  }
+  if (a.tiles.length !== b.tiles.length) return `it has ${b.tiles.length} tiles instead of ${a.tiles.length}`;
+  for (let i = 0; i < a.tiles.length; i++) {
+    const x = a.tiles[i], y = b.tiles[i];
+    if (!renumbered && (x.orientation !== y.orientation || x.mainIndex !== y.mainIndex || x.subIndex !== y.subIndex)) return `tile ${i} changed its number`;
+    let px, py;
+    try {
+      px = decodeTile(x);
+      py = decodeTile(y);
+    } catch (e) {
+      return `tile ${i} can't be drawn (${(e as Error).message})`;
+    }
+    if (!!px !== !!py) return `tile ${i} lost its picture`;
+    if (!touched.has(i) && px && py && (px.pixels.length !== py.pixels.length || px.pixels.some((v, k) => v !== py.pixels[k]))) return `tile ${i} changed although it wasn't edited`;
+  }
+  return null;
 }

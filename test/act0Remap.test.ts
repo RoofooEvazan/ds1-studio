@@ -40,7 +40,8 @@ describe('the act a tile library was drawn for', () => {
   });
 });
 
-describe.runIf(hasD2)('art drawn for the classic Act 5 palette', async () => {
+// Only when the game is installed (the suite opens its MPQs while it is collected).
+if (hasD2) describe('art drawn for the classic Act 5 palette', async () => {
   const { LayeredFs, MpqSource } = await import('../src/vfs/vfs');
   const { NodeFileAccess } = await import('../tools/nodeAccess');
   const { GameData } = await import('../src/game/GameData');

@@ -124,7 +124,8 @@ describe('starting from an existing object', () => {
   });
 });
 
-describe.runIf(hasD2)('custom objects and the game files', async () => {
+// Only when the game is installed (the suite opens its MPQs while it is collected).
+if (hasD2) describe('custom objects and the game files', async () => {
   const fs = new LayeredFs(await Promise.all(['patch_d2.mpq', 'd2exp.mpq', 'd2data.mpq'].map((m) => MpqSource.open(m, new NodeFileAccess(`${D2_DIR}/${m}`)))));
   it('writes COFs laid out like the game’s own', async () => {
     const own = (await fs.read('data/global/objects/rb/cof/rbnuhth.cof'))!;

@@ -129,21 +129,3 @@ Like the game: the DS1's row in `LvlPrest.txt` gives a `LevelId` and `Dt1Mask`; 
 `LvlTypes.txt` row, and each set mask bit *i* selects that row's `File i+1`. Presets shared by several levels
 (`LevelId` 0) and presets not in LvlPrest at all get the level type whose files best match the DS1's embedded file
 list; you can override the level type per map in the **Map** panel.
-
-## MCP server (hidden feature)
-
-`ds1-studio --mcp` (the installed program with that switch) starts DS1 Studio without a window as a
-[Model Context Protocol](https://modelcontextprotocol.io) server on stdin/stdout, so an AI assistant can open, read,
-render, edit, check and save maps. It isn't advertised in the app: **Help → About**, click the version five times, shows
-the exact setup command for Claude Code and the JSON for Claude Desktop.
-
-- The native side (`src-tauri/src/lib.rs`, `mcp_*`) creates the usual window hidden, with `window.__DS1_MCP__` set, and
-  relays newline-delimited JSON-RPC between the standard streams and it (`mcp-in` events / `mcp_out`). stdin closing
-  ends the app.
-- In the window, `src/main.tsx` starts `src/mcp/main.ts` instead of the editor. `src/mcp/protocol.ts` handles
-  initialize / tools/list / tools/call / ping; `src/mcp/session.ts` defines the tools and runs them on the same editing
-  code as the editor (MapDocument with undo, clipboard, edit tools, compatibility check, CPU renderer → JPEG).
-- It uses the folders chosen in the app (the saved config), reads only inside them and writes only through the save
-  target (the mod folder, keeping `.bak`). Maps are written only by `save_map`.
-- `test/mcp.test.ts` drives the protocol and the tools in Node. End to end: `cargo build --release --features
-  tauri/custom-protocol` (as the installers do), then speak JSON-RPC to `ds1-studio.exe --mcp`.

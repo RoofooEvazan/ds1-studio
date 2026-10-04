@@ -27,6 +27,8 @@ import { ORIENTATION_NAMES } from './state';
 import { Thumb } from './TilePalette';
 import { isBuiltinPath } from '../game/specialTiles';
 import { sharedTakenKeys } from '../game/ownTiles';
+import { cellMoves, composeMoves, libraryOwners, loadedWithOwners, movedNumbers, renumberDt1, settledMoves, tileNumbers, type NumberOwners, type TileNumber } from '../game/reassignTiles';
+import { ReassignPanel } from './ReassignPanel';
 
 const short = (p: string) => p.replace(/^data\/global\/tiles\//i, '');
 
@@ -37,6 +39,8 @@ export interface Dt1EditResult {
   /** Replace the original with the new DT1 in this map's tile libraries. */
   switchMap: boolean;
   original: string;
+  /** Old tile number → new ("orientation|main|sub") for the cells the open map placed: moved along when it is saved. */
+  moves?: Map<string, string>;
 }
 
 interface Props {
@@ -155,6 +159,14 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
   const [opNote, setOpNote] = useState<string | null>(null);
   /** Waiting for "Delete the selected tiles?" (the Delete key or the button). */
   const [deleting, setDeleting] = useState(false);
+  /** The Reassign index menu: the DT1 it renumbers (with unsaved changes), its numbers and the tiles shown. */
+  const [reassign, setReassign] = useState<{ bytes: Uint8Array; numbers: TileNumber[]; indices: number[] } | null>(null);
+  /** Renumberings applied but not saved (old → new, relative to the map's cells). */
+  const [pendingMoves, setPendingMoves] = useState<Map<string, string>>(new Map());
+  const [remapMap, setRemapMap] = useState(true);
+  const [loadedWith, setLoadedWith] = useState<NumberOwners | null>(null);
+  const [library, setLibrary] = useState<NumberOwners | null>(null);
+  const [libraryProgress, setLibraryProgress] = useState<string | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -171,6 +183,8 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
     setIniMessage(null);
     setWorking(null);
     setOpNote(null);
+    setReassign(null);
+    setPendingMoves(new Map());
     if (!path) return;
     void Promise.all([gd.dt1(path), gd.fs.read(path)]).then(([tiles, bytes]) => {
       if (live) { setDt1(tiles); setRawBytes(bytes); }
@@ -314,7 +328,9 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
       const painted = edits.size ? setManyTilePixels(bytes, [...edits].map(([tileIndex, image]) => ({ tileIndex, image }))) : bytes;
       const recoloured = changes ? recolorDt1(painted, remap, [...picked]) : painted;
       const out = settingsEdits.size ? writeTileSettings(recoloured, settingsEdits) : recoloured;
-      await onSave({ path: newPath, bytes: out, switchMap: switchMap && !overwrite && inMapLib, original: path });
+      const usesSaved = inMapLib && (overwrite || switchMap);
+      const moves = remapMap && usesSaved && pendingMoves.size ? settledMoves(pendingMoves, tileNumbers(out)) : undefined;
+      await onSave({ path: newPath, bytes: out, switchMap: switchMap && !overwrite && inMapLib, original: path, moves });
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -483,6 +499,35 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
       useWorking(buildDt1(order.map((o) => o.r)), [...picked].map((i) => where.get(i)!).filter((i) => i !== undefined), 'Sorted the tiles by orientation, then main and sub index (tiles sharing a number keep their order). Maps find tiles by number, so nothing changes in them. Save to keep it.');
     });
 
+  /** Opens the Reassign index menu for the selected tiles (and the other half of corners among them). */
+  const openReassign = () =>
+    runOp(async () => {
+      const bytes = await bake();
+      setReassign({ bytes, numbers: tileNumbers(bytes), indices: withPartners(dt1Records(bytes)) });
+      setLoadedWith(null);
+      void loadedWithOwners(gd, path, map?.lib.loaded.map((l) => l.path) ?? []).then(setLoadedWith);
+      if (!library) {
+        setLibraryProgress('Checking the game library…');
+        void libraryOwners(gd, (done, total) => (done % 40 === 0 || done === total) && setLibraryProgress(done === total ? null : `Checking the game library… ${done}/${total}`)).then((l) => {
+          setLibrary(l);
+          setLibraryProgress(null);
+        });
+      }
+    });
+  const applyReassign = (changes: Map<number, TileNumber>) => {
+    if (!reassign) return;
+    const next = renumberDt1(reassign.bytes, changes);
+    const { moves } = movedNumbers(reassign.numbers, tileNumbers(next));
+    setPendingMoves((m) => composeMoves(m, moves));
+    setReassign(null);
+    const cells = inMapLib && map && remapMap ? cellMoves(map.ds1, settledMoves(composeMoves(pendingMoves, moves), tileNumbers(next))).length : 0;
+    useWorking(
+      next,
+      reassign.indices,
+      `Gave ${changes.size} tile${changes.size === 1 ? '' : 's'} new numbers${cells ? `; ${cells} placed cell${cells === 1 ? '' : 's'} of the map will follow when you save` : ''}. Save to keep it.`,
+    );
+  };
+
   // Delete: asks to delete the selected tiles (clicking a tile leaves the focus outside the dialog, so on the window).
   const canDelete = useRef(false);
   canDelete.current = picked.size > 0 && painting === null && !busy;
@@ -557,6 +602,9 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
           <button className="btn small danger" disabled={!picked.size || busy} onClick={() => setDeleting(true)} title="Remove the selected tiles from this DT1 (Delete). Asks first.">
             Delete…
           </button>
+          <button className="btn small" disabled={!picked.size || busy || reassign !== null} onClick={openReassign} title="Give the selected tiles new numbers (main index, sub index, kind), checked against the DT1s loaded with this one; the map's placed tiles can follow">
+            Reassign index…
+          </button>
           <button className="btn small" disabled={!dt1 || busy} onClick={sortTiles} title="Put the tiles in order: by orientation, then main index, then sub index">
             Sort by number
           </button>
@@ -627,7 +675,29 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
             }}
           />
         )}
-        <div className="dte-body" hidden={painting !== null}>
+        {reassign && dt1 && painting === null && (
+          <ReassignPanel
+            path={path}
+            tiles={dt1.tiles}
+            numbers={reassign.numbers}
+            indices={reassign.indices}
+            rarityOf={(i) => {
+              const s = readTileSettings(reassign.bytes, i);
+              return { rarity: s.frame, animated: s.animated };
+            }}
+            palette={palette}
+            loadedWith={loadedWith}
+            library={library}
+            libraryProgress={libraryProgress}
+            mapCells={inMapLib && map ? (moves) => cellMoves(map.ds1, moves).length : null}
+            pendingMoves={pendingMoves}
+            remapMap={remapMap}
+            setRemapMap={setRemapMap}
+            onApply={applyReassign}
+            onCancel={() => setReassign(null)}
+          />
+        )}
+        <div className="dte-body" hidden={painting !== null || reassign !== null}>
           <Dt1Tree all={allDt1s} inMap={libs} selected={path} onSelect={p => { if (p !== path && discardAllowed()) setPath(p); }} />
           <div
             className="thumb-grid dte-grid"
@@ -749,6 +819,9 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
             </div>
             {overwrite && <p className="small warn-text">Overwrites the original (kept as .bak).</p>}
             {exists && <p className="small warn-text">A DT1 with that name already exists and will be replaced.</p>}
+            {pendingMoves.size > 0 && remapMap && inMapLib && !overwrite && !switchMap && (
+              <p className="small warn-text">The map&apos;s placed tiles only move to the new numbers when it uses the saved DT1: overwrite it, or tick “Use it in this map”.</p>
+            )}
             {!overwrite && inMapLib && map && (
               <label className="small">
                 <input type="checkbox" checked={switchMap} onChange={(e) => setSwitchMap(e.target.checked)} /> Use it in this map instead of {short(path).split('/').pop()}
@@ -781,7 +854,7 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
             />
           </FloatingWindow>
         )}
-        <div className="modal-actions" hidden={painting !== null}>
+        <div className="modal-actions" hidden={painting !== null || reassign !== null}>
           <button className="btn" onClick={close}>
             Close
           </button>

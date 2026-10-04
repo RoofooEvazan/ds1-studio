@@ -2,6 +2,7 @@ import { buildDt1, dt1Records, recordInfo, type Dt1Record } from '../formats/dt1
 import { normalizePath } from '../vfs/vfs';
 import { tileIdentity } from './assetUsage';
 import type { GameData, LvlTypeInfo } from './GameData';
+import { loadedWithPaths } from './reassignTiles';
 
 /**
  * Where DS1 Studio puts the tiles it makes for maps (automap pieces, walkability blockers and copies, floor rerolls,
@@ -70,15 +71,8 @@ export async function typeTakenKeys(gd: GameData, type: LvlTypeInfo | null | und
  * (the first-loaded wins), so new numbers for its tiles avoid them.
  */
 export async function sharedTakenKeys(gd: GameData, dt1Path: string, mapLibs: string[] = []): Promise<Set<string>> {
-  const self = normalizePath(dt1Path);
-  const paths = new Set(mapLibs.map(normalizePath));
-  for (const t of gd.lvlTypes) {
-    const files = t.files.filter(Boolean).map((f) => normalizePath(TILES + f));
-    if (files.includes(self)) for (const f of files) paths.add(f);
-  }
-  paths.delete(self);
   const taken = new Set<string>();
-  for (const p of paths) {
+  for (const p of loadedWithPaths(gd, dt1Path, mapLibs)) {
     const d = await gd.dt1(p).catch(() => null);
     for (const t of d?.tiles ?? []) taken.add(tileIdentity(t.orientation, t.mainIndex, t.subIndex));
   }

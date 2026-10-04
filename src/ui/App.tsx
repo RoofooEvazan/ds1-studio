@@ -135,6 +135,7 @@ import { bugReportUrl, checkForUpdate, featureRequestUrl, GUIDE_URL, MANUAL_PDF_
 import { Dt1Editor, type Dt1EditResult } from './Dt1Editor';
 import { WalkLegend, WalkPanel, type WalkBrush } from './WalkPanel';
 import { planTileFlags, planWalkEdit, unresolvedEdits, type WalkPaint } from '../game/walkEdit';
+import { cellMoves } from '../game/reassignTiles';
 import { appendTiles, keysOf, ownTilesPath, typeTakenKeys } from '../game/ownTiles';
 import { cellFix, ENTRY_IMAGE_DIR, levelSizeFix, MAX_TILE_PATH, rowOfRecord, tilePathProblem } from '../game/addToGame';
 import { ActSafeDialog } from './ActSafeDialog';
@@ -2517,6 +2518,8 @@ export function App() {
   const saveEditedDt1 = useCallback(
     async (r: Dt1EditResult) => {
       if (!gd) return;
+      const overwrote = normalizePath(r.path) === normalizePath(r.original);
+      const before = r.moves?.size && overwrote ? await gd.fs.read(r.path) : null;
       await writeFiles([{ path: r.path, bytes: r.bytes }]);
       gd.forgetDt1(r.path);
       const notes: string[] = [`Saved ${r.path.split('/').pop()}`];
@@ -2534,6 +2537,17 @@ export function App() {
           notes.push(writes.length ? 'LvlTypes/Dt1Mask updated' : 'map now uses it');
         } catch (e) {
           notes.push(`game tables not updated: ${errorMessage(e)}`);
+        }
+      }
+      // Reassigned numbers: the map's placed cells move to the tiles' new numbers, as one undo step (which, when the
+      // DT1 was overwritten, also puts the DT1 back).
+      if (r.moves?.size && doc && currentContext.current.doc === doc) {
+        const edits = cellMoves(doc.ds1, r.moves);
+        if (edits.length) {
+          const label = `Reassign tile numbers in ${r.path.split('/').pop()}`;
+          doc.apply(edits, label, before ? { path: r.path, before, after: r.bytes } : undefined);
+          bump();
+          notes.push(`${edits.length} placed cell${edits.length === 1 ? '' : 's'} moved to the new numbers (Undo puts ${before ? 'them and the DT1' : 'them'} back)`);
         }
       }
       await reloadTables();
@@ -3324,21 +3338,29 @@ export function App() {
     if (!doc || !gd || historyBusyRef.current) return;
     historyBusyRef.current = true; setHistoryBusy(true);
     try {
+      let dt1Written = false;
       const write = async (path: string, bytes: Uint8Array, expected: Uint8Array) => {
+        const isDt1 = /\.dt1$/i.test(path);
         const current = await gd.fs.read(path);
-        if (!current || current.length !== expected.length || current.some((v, i) => v !== expected[i])) throw new Error('The automap table changed since this edit. Undo was stopped to preserve those changes.');
+        if (!current || current.length !== expected.length || current.some((v, i) => v !== expected[i])) throw new Error(`${isDt1 ? path.split('/').pop() : 'The automap table'} changed since this edit. Undo was stopped to preserve those changes.`);
         await writeFiles([{ path, bytes }]);
+        if (isDt1) {
+          gd.forgetDt1(path);
+          dt1Written = true;
+          return;
+        }
         setAutomapData((d) => d ? { ...d, table: parseAutomap(parseTxtTable(bytes)) } : d);
         setAutomapSuggestions(null);
       };
       for (let i = 0; i < count; i++) {
         if (!(await (direction === 'undo' ? doc.undoWithFiles(write) : doc.redoWithFiles(write)))) break;
       }
+      if (dt1Written) await reloadTables();
       setSelection((s) => fitSelection(s, doc.ds1.width, doc.ds1.height));
       setStack(null); setHover(null); bump();
     } catch (e) { notify(String(e), true); }
     finally { historyBusyRef.current = false; setHistoryBusy(false); }
-  }, [doc, gd, writeFiles, notify]);
+  }, [doc, gd, writeFiles, notify, reloadTables]);
   const undo = useCallback(() => { void replayHistory('undo'); }, [replayHistory]);
   const redo = useCallback(() => { void replayHistory('redo'); }, [replayHistory]);
 

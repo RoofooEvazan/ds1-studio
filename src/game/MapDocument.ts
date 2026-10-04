@@ -142,8 +142,12 @@ export class MapDocument {
     this.stroke = null;
   }
 
-  /** Sets cells; returns true if anything changed. Outside a stroke, one undo step named `label`. */
-  apply(edits: CellEdit[], label = 'Edit tiles'): boolean {
+  /**
+   * Sets cells; returns true if anything changed. Outside a stroke, one undo step named `label`. With `file` (a file
+   * written with the change, such as a renumbered DT1), the step restores that file too when undone.
+   */
+  apply(edits: CellEdit[], label = 'Edit tiles', file?: FileHistoryChange): boolean {
+    if (file) { this.endStroke(); this.endObjectEdit(); }
     const applied: CellChange[] = [];
     for (const { layer, x, y, cell } of edits) {
       if (!this.inBounds(x, y)) continue;
@@ -162,7 +166,7 @@ export class MapDocument {
         this.stroke.set(k, prev ? { ...c, before: prev.before } : c);
       }
     } else {
-      this.pushHistory({ label: `${label} (${applied.length} cell${applied.length === 1 ? '' : 's'})`, time: Date.now(), cells: applied });
+      this.pushHistory({ label: `${label} (${applied.length} cell${applied.length === 1 ? '' : 's'})`, time: Date.now(), cells: applied, ...(file ? { file: { ...file, before: file.before.slice(), after: file.after.slice() } } : {}) });
     }
     this.revision++;
     return true;

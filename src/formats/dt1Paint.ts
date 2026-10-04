@@ -451,3 +451,36 @@ export function editedDt1Problem(before: Uint8Array, after: Uint8Array, touched:
   }
   return null;
 }
+
+/** Row widths of an isometric (format 1) 32×15 block, centred in its 32 columns. */
+const ISO_ROWS = [4, 8, 12, 16, 20, 24, 28, 32, 28, 24, 20, 16, 12, 8, 4];
+
+/**
+ * The standard floor/roof diamond (the 25 isometric blocks of a 160×79 floor tile, at tile x 0-159, y 0-78) as a mask
+ * over an image of the given geometry: where a floor or roof tile can have pixels, whatever its blocks are stored as.
+ */
+export function diamondMask(g: { width: number; height: number; offsetX: number; offsetY: number }): Uint8Array {
+  const mask = new Uint8Array(g.width * g.height);
+  for (let i = 0; i < 5; i++)
+    for (let j = 0; j < 5; j++) {
+      const bx = 64 + 16 * (i - j), by = 64 - 8 * (i + j);
+      ISO_ROWS.forEach((w, r) => {
+        const y = by + r - g.offsetY;
+        if (y < 0 || y >= g.height) return;
+        for (let x = bx + (32 - w) / 2 - g.offsetX, end = x + w; x < end; x++) if (x >= 0 && x < g.width) mask[y * g.width + x] = 1;
+      });
+    }
+  return mask;
+}
+
+/** `image` cut to the standard floor/roof diamond, and how many of its pixels lay outside it. */
+export function cropToDiamond(image: TileImage): { image: TileImage; dropped: number } {
+  const mask = diamondMask(image);
+  let dropped = 0;
+  const pixels = image.pixels.map((v, i) => {
+    if (mask[i] || !v) return v;
+    dropped++;
+    return 0;
+  });
+  return { image: { ...image, pixels }, dropped };
+}

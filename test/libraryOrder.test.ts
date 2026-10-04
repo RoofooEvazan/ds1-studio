@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { decodeTile, parseDt1 } from '../src/formats/dt1';
-import { cropToTile, droppedPixelCount, editedDt1Problem, setManyTilePixels } from '../src/formats/dt1Paint';
+import { cropToDiamond, cropToTile, diamondMask, droppedPixelCount, editedDt1Problem, paintableMask, setManyTilePixels } from '../src/formats/dt1Paint';
+import { rebuildRleRecord } from '../src/formats/dt1Blocks';
+import { buildDt1, dt1Records } from '../src/formats/dt1Write';
 import { getCell, parseTxtTable } from '../src/formats/txtTable';
 import { loadLevelTables, planSwapLibraries } from '../src/game/levelTables';
 import { LayeredFs, LooseSource, MpqSource } from '../src/vfs/vfs';
@@ -39,7 +41,7 @@ describe('library load order', () => {
 
 if (hasD2)
   describe('floor pictures and the save check', async () => {
-    const fs = new LayeredFs([await MpqSource.open('d2data.mpq', new NodeFileAccess(`${D2_DIR}/d2data.mpq`))]);
+    const fs = new LayeredFs(await Promise.all(['d2exp.mpq', 'd2data.mpq'].map((m) => MpqSource.open(m, new NodeFileAccess(`${D2_DIR}/${m}`)))));
     const bytes = (await fs.read('data/global/tiles/act1/town/floor.dt1'))!;
     const dt1 = parseDt1(bytes);
     const full = (i: number) => {
@@ -65,4 +67,31 @@ if (hasD2)
       new DataView(fewer.buffer).setInt32(268, dt1.tiles.length - 1, true);
       expect(editedDt1Problem(bytes, fewer, new Set([0]))).toMatch(/tiles instead of/);
     });
+  
+    it('knows the floor diamond of the game’s own floor and roof tiles', async () => {
+      const roofs = parseDt1((await fs.read('data/global/tiles/act1/outdoors/cottages.dt1'))!);
+      for (const t of [...dt1.tiles, ...roofs.tiles].filter((t) => (t.orientation === 0 || t.orientation === 15) && t.blocks.length === 25 && t.blocks.every((b) => b.format === 1)).slice(0, 20)) {
+        const g = decodeTile(t)!;
+        expect([...diamondMask(g)]).toEqual([...paintableMask(t)]);
+      }
+    });
+
+    it('cuts a picture imported into a floor stored as wall-style blocks to the diamond too', async () => {
+      const bytes2 = (await fs.read('data/global/tiles/act2/tomb/talrasha.dt1'))!;
+      const tomb = parseDt1(bytes2);
+      const i = tomb.tiles.findIndex((t) => t.orientation === 0 && t.blocks.length && t.blocks.every((b) => b.format !== 1));
+      expect(i).toBeGreaterThanOrEqual(0);
+      const g = decodeTile(tomb.tiles[i])!;
+      const { image, dropped } = cropToDiamond({ ...g, pixels: new Uint8Array(g.width * g.height).fill(7) });
+      expect(dropped).toBeGreaterThan(0);
+      const recs = dt1Records(bytes2);
+      recs[i] = rebuildRleRecord(recs[i], image);
+      const out = buildDt1(recs);
+      expect(editedDt1Problem(bytes2, out, new Set([i]))).toBeNull();
+      const after = decodeTile(parseDt1(out).tiles[i])!;
+      const mask = diamondMask(after);
+      expect(after.pixels.some((v, k) => v && !mask[k])).toBe(false);
+      expect(after.pixels.filter((v) => v).length).toBe(diamondMask(g).filter((v) => v).length);
+    });
   });
+

@@ -2,7 +2,7 @@ import { viewPalette } from '../game/openMap';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { isEmptyCell, type WallCell } from '../formats/ds1';
 import { decodeTile, Orientation, parseDt1, type Dt1, type TileImage } from '../formats/dt1';
-import { cropToTile, droppedPixelCount, editedDt1Problem, setManyTilePixels } from '../formats/dt1Paint';
+import { cropToDiamond, cropToTile, droppedPixelCount, editedDt1Problem, setManyTilePixels } from '../formats/dt1Paint';
 import { cornerPartner, freeSub, mirrorRecord, rebuildRleRecord } from '../formats/dt1Blocks';
 import { buildDt1, changedRecord, dt1Records, recordInfo, type Dt1Record } from '../formats/dt1Write';
 import { readPng, toPaletteIndices, writeIndexedPng } from '../formats/png';
@@ -459,10 +459,13 @@ export function Dt1Editor({ map, gd, presets, selection, canSave, onSave, onClos
       const colours = remapped ? `; ${remapped} pixel${remapped === 1 ? '' : 's'} took the nearest ${pal.usable ? 'Act 0 ' : ''}colour` : '';
       const rle = t.blocks.length > 0 && t.blocks.every((b) => b.format !== 1);
       if (rle) {
-        // Walls: the blocks are rebuilt from the picture, so it may have any shape inside its area.
+        // Walls: the blocks are rebuilt from the picture, so it may have any shape inside its area. A floor or roof
+        // stored this way (as some DT1s have them) still only covers the floor diamond: the rest is cut away.
+        const flat = t.orientation === Orientation.Floor || t.orientation === Orientation.Roof;
+        const { image: shaped, dropped } = flat ? cropToDiamond(image) : { image, dropped: 0 };
         const records = dt1Records(await bake());
-        records[i] = rebuildRleRecord(records[i], image);
-        useWorking(buildDt1(records), [i], `Imported the picture into tile ${t.orientation}/${t.mainIndex}/${t.subIndex}${colours}. Save to keep it.`);
+        records[i] = rebuildRleRecord(records[i], shaped);
+        useWorking(buildDt1(records), [i], `Imported the picture into tile ${t.orientation}/${t.mainIndex}/${t.subIndex}${colours}${dropped ? `; ${dropped} pixels outside the floor diamond were cut away (floor and roof tiles keep their diamond shape)` : ''}. Save to keep it.`);
       } else {
         // Floors and roofs keep their diamond: the picture is painted into it, and what lies outside is cut away now,
         // so the tile shows what saving keeps.

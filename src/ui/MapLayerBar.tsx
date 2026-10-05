@@ -39,6 +39,7 @@ function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: D
     {categories.map(([key, label]) => <button key={key} aria-pressed={v[key]} title={`Show or hide ${label.toLowerCase()}${key === 'shadows' || key === 'specials' ? '' : ' across the enabled wall layers'}${soloTip}`} onClick={() => onChange({ ...v, [key]: !v[key] })} {...solo(key)}>{label}</button>)}
     <span className="map-layer-separator" />
     <button aria-pressed={v.objectsLayer} title="Show or hide objects and NPCs (markers, sprites and paths). Hidden, they stay where they are when you copy, cut or clear an area. The Objects tool always shows them." onClick={() => onChange({ ...v, objectsLayer: !v.objectsLayer })}>Objects</button>
+    <button aria-pressed={v.lightRings} title="Show how far each object's light reaches (torches, fires, candles, invisible light sources): a ring in its colour around it, where the light fades out. View → Level light shows the light itself." onClick={() => onChange({ ...v, lightRings: !v.lightRings })}>Lights</button>
     <details className="wall-category-options">
       <summary>DT1 wall categories</summary>
       <div className="wall-category-list">

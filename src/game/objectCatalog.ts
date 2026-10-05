@@ -55,6 +55,8 @@ export interface CatalogEntry {
   selectable?: boolean;
   /** Objects: the objects.txt row (record number). */
   row?: number;
+  /** Objects: the light it gives off as placed. */
+  light?: ObjectLight | null;
 }
 
 /** "RogueFountain" -> "Rogue Fountain", "Torch1 Tiki" -> "Torch 1 Tiki", "place_champion" -> "Place champion". */
@@ -75,6 +77,12 @@ function getter(row: Record<string, string>) {
   return (col: string) => (lower.get(col.toLowerCase()) ?? '').trim();
 }
 
+/** The mode a placed object is shown in: "ON" for torches and fires that loop in it, "OP" with no neutral mode, else "NU". */
+function objectMode(get: (col: string) => string): 'ON' | 'OP' | 'NU' {
+  return get('Mode2') === '1' && get('CycleAnim2') === '1' ? 'ON' : get('Mode0') !== '1' && get('Mode1') === '1' ? 'OP' : 'NU';
+}
+const MODE_INDEX = { NU: 0, OP: 1, ON: 2 } as const;
+
 /** Sprite of an objects.txt row: its default look (lit "ON" mode for torches and fires that loop in it, else "NU"). */
 export function objectSpec(row: Record<string, string>): SpriteSpec | null {
   const get = getter(row);
@@ -83,8 +91,28 @@ export function objectSpec(row: Record<string, string>): SpriteSpec | null {
   const parts: Record<string, string> = {};
   for (const c of COMPONENTS) if (get(c) === '1') parts[c] = 'LIT';
   if (!Object.keys(parts).length) parts.TR = 'LIT';
-  const mode = get('Mode2') === '1' && get('CycleAnim2') === '1' ? 'ON' : get('Mode0') !== '1' && get('Mode1') === '1' ? 'OP' : 'NU';
-  return { base: 'Data\\Global\\Objects', token, mode, cls: 'HTH', parts };
+  return { base: 'Data\\Global\\Objects', token, mode: objectMode(get), cls: 'HTH', parts };
+}
+
+/** Light an object gives off: radius in sub-tiles (the unit of a player's light radius), colour and flicker. */
+export interface ObjectLight {
+  radius: number;
+  rgb: [number, number, number];
+  flicker: boolean;
+}
+
+/**
+ * The light of an objects.txt row in the mode a placed object is shown in (Lit0-Lit7 by mode, Red/Green/Blue, Flicker):
+ * torches and braziers glow in their lit "ON" mode, candles in neutral; shrines and Cairn Stones only once used, so not
+ * as placed. Null when it gives none. Objects without graphics can be light sources too.
+ */
+export function objectLight(row: Record<string, string>): ObjectLight | null {
+  const get = getter(row);
+  const radius = Number(get(`Lit${MODE_INDEX[objectMode(get)]}`)) || 0;
+  if (radius <= 0) return null;
+  const c = (col: string) => Math.max(0, Math.min(255, Number(get(col)) || 0));
+  const rgb: [number, number, number] = [c('Red'), c('Green'), c('Blue')];
+  return { radius, rgb: rgb.some((v) => v) ? rgb : [255, 255, 255], flicker: get('Flicker') === '1' };
 }
 
 /** Sprite of a monster (MonStats row + its MonStats2 row), standing in its neutral mode. */
@@ -125,7 +153,7 @@ export function objectRowsByNumber(t: Pick<CatalogTables, 'objects'>): Map<numbe
       const desc = r['description - not loaded'] || r['Name'] || `Object ${row}`;
       // A custom object goes by the name it was given there.
       const custom = desc.startsWith(CUSTOM_OBJECT_MARK) ? desc.slice(CUSTOM_OBJECT_MARK.length) : null;
-      out.set(row, { name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row });
+      out.set(row, { name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row, light: objectLight(r) });
     });
   return out;
 }

@@ -62,6 +62,31 @@ void main() {
   vFlags = int(aMeta.y);
 }`;
 
+/** Objects' lights drawn at once (the shader loops over them per pixel): those nearest the view. */
+export const MAX_LIGHTS = 48;
+
+/** A light in the scene: world position, radius in sub-tiles (as a player's light radius), colour 0-255. */
+export interface SceneLight {
+  x: number;
+  y: number;
+  radius: number;
+  rgb: [number, number, number];
+}
+
+/** World pixels per sub-tile of light radius, the most along either screen axis (see the shader's falloff). */
+const LIGHT_REACH = 16 * Math.SQRT2;
+
+/** The lights reaching into the view, nearest its centre first, at most MAX_LIGHTS. */
+export function nearestLights(lights: SceneLight[], camera: { x: number; y: number; zoom: number }, width: number, height: number): SceneLight[] {
+  const hw = width / 2 / camera.zoom, hh = height / 2 / camera.zoom;
+  return lights
+    .filter((l) => Math.abs(l.x - camera.x) < hw + l.radius * LIGHT_REACH && Math.abs(l.y - camera.y) < hh + l.radius * LIGHT_REACH)
+    .map((l) => ({ l, d: (l.x - camera.x) ** 2 + (l.y - camera.y) ** 2 }))
+    .sort((a, b) => a.d - b.d)
+    .slice(0, MAX_LIGHTS)
+    .map((x) => x.l);
+}
+
 // Palette-indexed pixels can't use the GPU's texture filtering, so the shader resolves the palette itself. At 100%
 // and closer each screen pixel shows one tile pixel (exactly what the game draws). Zoomed out, a screen pixel covers
 // several tile pixels: they are averaged in linear light (a proper downscale, no shimmer or dropped pixels), and the
@@ -73,6 +98,9 @@ uniform sampler2DArray uAtlas;
 uniform sampler2D uPalette;
 uniform vec3 uLight;               // the level's ambient light (Levels.txt Intensity × Red/Green/Blue), 1 = unlit
 uniform vec3 uGlow;                // a player's light: world x, y and radius in sub-tiles (0 = none)
+uniform vec4 uLights[${MAX_LIGHTS}];        // objects' lights: world x, y, radius in sub-tiles
+uniform vec3 uLightRgb[${MAX_LIGHTS}];      // and their colours (0-1)
+uniform int uLightCount;
 in vec2 vTex;
 in vec2 vWorld;
 flat in vec4 vRect;
@@ -131,6 +159,14 @@ void main() {
     float a = (d.x / 16.0 + d.y / 8.0) * 0.5;
     float b = (d.y / 8.0 - d.x / 16.0) * 0.5;
     light = mix(vec3(1.0), uLight, smoothstep(0.55, 1.0, length(vec2(a, b)) / uGlow.z));
+  }
+  // Objects' lights (torches, fires, candles…): the same falloff, in their colour; where lights meet, the brightest.
+  for (int k = 0; k < ${MAX_LIGHTS}; k++) {
+    if (k >= uLightCount) break;
+    vec2 d = vWorld - uLights[k].xy;
+    float a = (d.x / 16.0 + d.y / 8.0) * 0.5;
+    float b = (d.y / 8.0 - d.x / 16.0) * 0.5;
+    light = max(light, mix(uLightRgb[k], uLight, smoothstep(0.55, 1.0, length(vec2(a, b)) / uLights[k].z)));
   }
   rgb *= light;
   // Output is premultiplied (blendFunc ONE, ONE_MINUS_SRC_ALPHA), so alpha 0 with colour means "add".
@@ -342,6 +378,8 @@ export class MapRenderer {
   light: [number, number, number] = [1, 1, 1];
   /** A player's light around a world point: x, y, radius in sub-tiles (0 = none). */
   glow: [number, number, number] = [0, 0, 0];
+  /** Objects' lights (world position, radius in sub-tiles, colour 0-255); those nearest the view are drawn. */
+  lights: SceneLight[] = [];
 
   draw(camera: Camera, background: [number, number, number]): void {
     const gl = this.gl;
@@ -366,6 +404,15 @@ export class MapRenderer {
     gl.uniform1i(gl.getUniformLocation(this.program, 'uPalette'), 1);
     gl.uniform3f(gl.getUniformLocation(this.program, 'uLight'), ...this.light);
     gl.uniform3f(gl.getUniformLocation(this.program, 'uGlow'), ...this.glow);
+    const near = nearestLights(this.lights, camera, width, height);
+    const pos = new Float32Array(MAX_LIGHTS * 4), rgb = new Float32Array(MAX_LIGHTS * 3);
+    near.forEach((l, k) => {
+      pos.set([l.x, l.y, l.radius, 0], k * 4);
+      rgb.set([l.rgb[0] / 255, l.rgb[1] / 255, l.rgb[2] / 255], k * 3);
+    });
+    gl.uniform4fv(gl.getUniformLocation(this.program, 'uLights'), pos);
+    gl.uniform3fv(gl.getUniformLocation(this.program, 'uLightRgb'), rgb);
+    gl.uniform1i(gl.getUniformLocation(this.program, 'uLightCount'), near.length);
     gl.bindVertexArray(this.vao);
     gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, this.instanceCount);
     gl.bindVertexArray(null);

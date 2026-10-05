@@ -42,16 +42,30 @@ interface LightPanelProps {
   onDraft: (d: LevelLight | null) => void;
   onApply: (intensity: number, rgb: [number, number, number]) => Promise<void>;
   onAddToGame: () => void;
+  /** How many placed objects give off light, whether they light the preview, and whether their rings are drawn. */
+  objectLights: number;
+  lightsOn: boolean;
+  onLightsOn: (on: boolean) => void;
+  rings: boolean;
+  onRings: (on: boolean) => void;
 }
 
 /** Level light mode: the map drawn in its level's light, and the light's settings. */
-export function LightPanel({ light, canWrite, playerLight, onPlayerLight, onDraft, onApply, onAddToGame }: LightPanelProps) {
+export function LightPanel({ light, canWrite, playerLight, onPlayerLight, onDraft, onApply, onAddToGame, objectLights, lightsOn, onLightsOn, rings, onRings }: LightPanelProps) {
   return (
     <section className="panel">
       <div className="panel-body">
         {light ? (
           <>
             <LevelLightEditor light={light} shown canWrite={canWrite} onApply={onApply} onDraft={onDraft} playerLight={playerLight} onPlayerLight={onPlayerLight} />
+            <label className="mini-check">
+              <input type="checkbox" checked={lightsOn} onChange={(e) => onLightsOn(e.target.checked)} /> Object lights <span className="muted small">{objectLights}</span>{' '}
+              <HelpTip text="Torches, fires, candles and other objects light the area around them, as in game: objects.txt gives each its light radius (Lit, by the mode the object is in, in sub-tiles like a player's light) and colour (Red/Green/Blue). Shrines and Cairn Stones light up only once used, so not here. Flicker isn't shown." />
+            </label>
+            <label className="mini-check">
+              <input type="checkbox" checked={rings} onChange={(e) => onRings(e.target.checked)} /> Show how far each reaches{' '}
+              <HelpTip text="A ring around each light, where it fades out. Also in any mode: Lights in the bar above the map (handy for placing invisible light sources in Objects mode)." />
+            </label>
             <p className="muted small">
               The map is drawn as dark and tinted as the game lights this level. Move the mouse over it to see a player&apos;s own light (Player light).
               Changes show straight away; Apply writes them into Levels.txt.

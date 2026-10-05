@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DS1 Studio",
-  "version": "0.2.56",
+  "version": "0.2.57",
   "identifier": "com.ds1studio.editor",
   "build": {
     "beforeDevCommand": "npm run dev",

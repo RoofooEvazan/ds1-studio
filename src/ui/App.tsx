@@ -82,6 +82,7 @@ import { buildPresetPackage, planPresetImport, type PresetImportPlan } from '../
 import { layerKey, layerLabel, MapDocument, type Brush, type CellEdit, type LayerRef, type FileHistoryChange } from '../game/MapDocument';
 import { drawnPalettes, guessDrawnAct, openMap, refreshPalette, rememberPalette, setViewPalette, withPalette, type MapOverride, type OpenMap } from '../game/openMap';
 import { buildScene, cellToWorld, hitTest, sameItem, subTileToWorld, tilesAt, worldToSubTile, type DrawItem } from '../render/scene';
+import type { SceneLight } from '../render/MapRenderer';
 import { canPickFolders, loadFromDevServer, sourcesFromDirectory } from '../vfs/loaders';
 import { devServerSaveTarget, directorySaveTarget, downloadFile, exportBytes, importMany, importNamed, type SaveTarget } from '../vfs/save';
 import { LayeredFs, normalizePath, type FileSource } from '../vfs/vfs';
@@ -626,6 +627,18 @@ export function App() {
   };
 
   const gd = data.status === 'ready' ? data.gd : null;
+  /** The placed objects that give off light (objects.txt Lit, Red/Green/Blue), where they stand. */
+  const objectLights = useMemo((): SceneLight[] => {
+    if (!gd || !map) return [];
+    const out: SceneLight[] = [];
+    for (const o of map.ds1.objects) {
+      const l = gd.objectLight(map.ds1.act, o.type, o.id);
+      if (!l) continue;
+      const [x, y] = subTileToWorld(o.x, o.y);
+      out.push({ x, y, radius: l.radius, rgb: l.rgb });
+    }
+    return out;
+  }, [gd, map, revision, objectsRevision]); // eslint-disable-line react-hooks/exhaustive-deps
   const currentContext = useRef({ gd, map, doc });
   currentContext.current = { gd, map, doc };
   const mapRequest = useRef(0);
@@ -4300,6 +4313,9 @@ export function App() {
             walkBrush={visibility.walkable ? { size: walkBrush.size, mode: walkBrush.mode } : null}
             light={visibility.light ? lightMultiplier(lightDraft ?? levelLight) : null}
             playerLight={playerLight}
+            objectLights={objectLights}
+            objectLightsLit={visibility.objectLights}
+            lightRings={visibility.lightRings}
             overview={overview}
           />
         ) : (
@@ -4426,6 +4442,11 @@ export function App() {
                 onDraft={setLightDraft}
                 onApply={applyLevelLight}
                 onAddToGame={() => setDialog('register')}
+                objectLights={objectLights.length}
+                lightsOn={visibility.objectLights}
+                onLightsOn={(on) => setVisibility((v) => ({ ...v, objectLights: on }))}
+                rings={visibility.lightRings}
+                onRings={(on) => setVisibility((v) => ({ ...v, lightRings: on }))}
               />
             )}
             {viewMode === 'roofs' && (

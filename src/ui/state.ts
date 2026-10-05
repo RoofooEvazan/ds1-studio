@@ -22,6 +22,10 @@ export interface Visibility {
    * them where they are. The Objects tool shows them whatever this is.
    */
   objectsLayer: boolean;
+  /** Each placed object's light drawn as a ring around it (how far it reaches), in any mode. */
+  lightRings: boolean;
+  /** Level light preview: objects' lights (torches, fires…) brighten the map around them. */
+  objectLights: boolean;
   objects: boolean;
   paths: boolean;
   groups: boolean;
@@ -53,6 +57,8 @@ export const DEFAULT_VISIBILITY: Visibility = {
   upperWalls: true,
   specials: true,
   objectsLayer: true,
+  lightRings: false,
+  objectLights: true,
   objects: true,
   paths: true,
   groups: false,

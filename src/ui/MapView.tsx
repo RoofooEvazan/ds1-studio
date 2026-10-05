@@ -6,7 +6,7 @@ import type { ResizeDelta } from '../formats/ds1ops';
 import { cellKey, type CellRect, type CellSelection } from '../game/clipboard';
 import type { OpenMap } from '../game/openMap';
 import { TileAtlas } from '../render/atlas';
-import { blendFlag, InstanceFlag, MapRenderer, type Camera, type Instance } from '../render/MapRenderer';
+import { blendFlag, InstanceFlag, MapRenderer, type Camera, type Instance, type SceneLight } from '../render/MapRenderer';
 import type { SpriteAnimation } from '../game/spriteAnim';
 import { AUTOMAP_CODES, AUTOMAP_SCALE, type AutomapPiece } from '../game/automap';
 import { automapCanvas, type AutomapKind, type AutomapStyle, type DrawPiece } from '../game/automapStyle';
@@ -132,6 +132,12 @@ interface Props {
   light?: [number, number, number] | null;
   /** With `light`: a player's light radius (sub-tiles) around the cursor, as a player standing there would see. */
   playerLight?: number;
+  /** The placed objects' lights (for the rings, and the light preview). */
+  objectLights?: SceneLight[] | null;
+  /** With `light`: the objects' lights brighten the map around them. */
+  objectLightsLit?: boolean;
+  /** Draw each object light's reach as a ring (any mode: for placing light sources). */
+  lightRings?: boolean;
 }
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.059];
@@ -279,6 +285,7 @@ export function MapView(props: Props) {
       renderer.current!.light = latest.current.light ?? [1, 1, 1];
       const glowAt = latest.current.light && latest.current.playerLight ? cursorWorld.current : null;
       renderer.current!.glow = glowAt ? [glowAt[0], glowAt[1], latest.current.playerLight!] : [0, 0, 0];
+      renderer.current!.lights = latest.current.light && latest.current.objectLightsLit !== false ? (latest.current.objectLights ?? []) : [];
       renderer.current!.draw(camera.current, BACKGROUND);
       drawOverlay(overlay.current!, camera.current, latest.current);
       minimapDraw.current?.();
@@ -617,7 +624,7 @@ export function MapView(props: Props) {
 
   useEffect(() => {
     dirty.current = true;
-  }, [selection, pasteRect, selectedObject, props.selectedObjects, objectLabel, walk, overviewPaths, props.resizeMode, props.marks, focus, automapImage, props.sprites, props.animations, hover, props.specialLabel, props.pops, props.walkMarks, props.walkBrush, props.light, props.playerLight, props.objectGhost, props.doomed, props.input?.objectLabels, props.objectsRevision]);
+  }, [selection, pasteRect, selectedObject, props.selectedObjects, objectLabel, walk, overviewPaths, props.resizeMode, props.marks, focus, automapImage, props.sprites, props.animations, hover, props.specialLabel, props.pops, props.walkMarks, props.walkBrush, props.light, props.playerLight, props.objectLights, props.objectLightsLit, props.lightRings, props.objectGhost, props.doomed, props.input?.objectLabels, props.objectsRevision]);
 
   // Input.
   useEffect(() => {
@@ -1417,6 +1424,35 @@ function drawOverlay(canvas: HTMLCanvasElement, cam: Camera, s: OverlayState) {
         }
       });
     });
+  }
+
+  // Each object light's reach (where its light fades out), in its colour: for placing light sources in any mode.
+  if (s.lightRings && s.objectLights?.length) {
+    ctx.save();
+    ctx.setLineDash([6 * px, 4 * px]);
+    ctx.lineWidth = 1.5 * px;
+    for (const l of s.objectLights) {
+      const [r, g, b] = l.rgb;
+      // The falloff is round in sub-tiles, so an ellipse twice as wide as high on screen.
+      const reach = l.radius * 16 * Math.SQRT2;
+      ctx.save();
+      ctx.translate(l.x, l.y);
+      ctx.scale(1, 0.5);
+      const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, reach);
+      glow.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.28)`);
+      glow.addColorStop(0.55, `rgba(${r}, ${g}, ${b}, 0.16)`);
+      glow.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+      ctx.beginPath();
+      ctx.arc(0, 0, reach, 0, Math.PI * 2);
+      ctx.fillStyle = glow;
+      ctx.fill();
+      ctx.restore();
+      ctx.beginPath();
+      ctx.ellipse(l.x, l.y, reach, reach / 2, 0, 0, Math.PI * 2);
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, 0.85)`;
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   if (showObjects) {

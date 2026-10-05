@@ -5,7 +5,7 @@ import { OLD_ACT5_PALETTE, parsePalette, palettePath, type Palette } from '../fo
 import { parseTxt, type TxtTable } from '../formats/txt';
 import { normalizePath, type LayeredFs } from '../vfs/vfs';
 import { loadObjectSprite, type Sprite, type SpriteSpec } from './sprites';
-import { buildCatalog, findObjectPresets, GAME_BINARIES, OBJECTS_PER_ACT, objectRowsByNumber, type ObjectRowEntry } from './objectCatalog';
+import { buildCatalog, findObjectPresets, GAME_BINARIES, OBJECTS_PER_ACT, objectRowsByNumber, type ObjectLight, type ObjectRowEntry } from './objectCatalog';
 
 export interface LvlTypeInfo {
   id: number;
@@ -66,7 +66,7 @@ export class GameData {
   readonly lvlTypes: LvlTypeInfo[] = [];
   readonly warnings: string[] = [];
   /** "act:type:id" -> name and sprite recipe, from the game's own tables (acts 1-based; see objectCatalog). */
-  private objRows = new Map<string, { name: string; spec: SpriteSpec | null; nameKey?: string; selectable?: boolean; row?: number }>();
+  private objRows = new Map<string, { name: string; spec: SpriteSpec | null; nameKey?: string; selectable?: boolean; row?: number; light?: ObjectLight | null }>();
   /** objects.txt rows by record number, for DS1 object ids of 150 and up (row = id - 150). */
   private objByRow = new Map<number, ObjectRowEntry>();
   private sprites = new Map<string, Promise<Sprite | null>>();
@@ -110,7 +110,7 @@ export class GameData {
     if (!presets) gd.warnings.push('The object table wasn’t found in D2Common.dll or Game.exe; objects are shown by number.');
     gd.objByRow = objectRowsByNumber({ objects });
     for (const e of buildCatalog(presets, { objects, monPreset, monStats, monStats2, superUniques })) {
-      gd.objRows.set(`${e.act}:${e.type}:${e.id}`, { name: e.name, spec: e.spec, nameKey: e.nameKey, selectable: e.selectable, row: e.row });
+      gd.objRows.set(`${e.act}:${e.type}:${e.id}`, { name: e.name, spec: e.spec, nameKey: e.nameKey, selectable: e.selectable, row: e.row, light: e.light });
     }
 
     for (const row of types?.rows ?? []) {
@@ -221,6 +221,11 @@ export class GameData {
       n -= per;
     }
     return this.objRows.get(`${act}:${type}:${n}`) ?? null;
+  }
+
+  /** The light a placed DS1 object gives off (objects.txt Lit of the mode it is shown in, Red/Green/Blue), or null. */
+  objectLight(act0: number, type: number, id: number): ObjectLight | null {
+    return type === 2 ? (this.objRow(act0, type, id)?.light ?? null) : null;
   }
 
   /** The objects.txt row (record number) a DS1 object resolves to, or null (NPCs, unknown ids). */

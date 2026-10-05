@@ -7,7 +7,7 @@ export function canvasToWorld(
 ): [number, number] {
   const z = camera.zoom;
   return [
-    Math.round(camera.x * z) / z + ((clientX - rect.left) * canvas.width / rect.width - canvas.width / 2) / z,
-    Math.round(camera.y * z) / z + ((clientY - rect.top) * canvas.height / rect.height - canvas.height / 2) / z,
+    Math.round(camera.x * z) / z + ((clientX - rect.left) * canvas.width / rect.width - Math.floor(canvas.width / 2)) / z,
+    Math.round(camera.y * z) / z + ((clientY - rect.top) * canvas.height / rect.height - Math.floor(canvas.height / 2)) / z,
   ];
 }

@@ -168,10 +168,22 @@ describe('selection and mode regression checks', () => {
   it('maps the rendered position back to the pointer through CSS scaling and camera snapping', () => {
     const rect={left:14,top:93,width:901,height:503}, canvas={width:1126,height:629}, cam={x:12.3,y:-4.7,zoom:0.37};
     const world=[240,120];
-    const x=rect.left+((world[0]-Math.round(cam.x*cam.zoom)/cam.zoom)*cam.zoom+canvas.width/2)*rect.width/canvas.width;
-    const y=rect.top+((world[1]-Math.round(cam.y*cam.zoom)/cam.zoom)*cam.zoom+canvas.height/2)*rect.height/canvas.height;
+    const x=rect.left+((world[0]-Math.round(cam.x*cam.zoom)/cam.zoom)*cam.zoom+Math.floor(canvas.width/2))*rect.width/canvas.width;
+    const y=rect.top+((world[1]-Math.round(cam.y*cam.zoom)/cam.zoom)*cam.zoom+Math.floor(canvas.height/2))*rect.height/canvas.height;
     const actual=canvasToWorld(x,y,rect,canvas,cam);
     expect(actual[0]).toBeCloseTo(world[0]); expect(actual[1]).toBeCloseTo(world[1]);
+  });
+  it('puts the middle of each screen pixel on the middle of a tile pixel at 100%, also on an odd-sized canvas', () => {
+    // Tile pixels meet on screen pixel edges, so no screen pixel samples exactly between two of them (where drivers
+    // round differently and drop pixels).
+    for (const canvas of [{width:1127,height:629},{width:1126,height:630}]) {
+      const rect={left:0,top:0,width:canvas.width,height:canvas.height}, cam={x:40.2,y:-17.6,zoom:1};
+      for (const px of [0,1,2,563,1000]) {
+        const [wx,wy]=canvasToWorld(px+0.5,px%600+0.5,rect,canvas,cam);
+        expect(Math.abs(wx-Math.floor(wx)-0.5)).toBeLessThan(1e-9);
+        expect(Math.abs(wy-Math.floor(wy)-0.5)).toBeLessThan(1e-9);
+      }
+    }
   });
   it('rejects truncated DT1 regions before editing them', () => {
     const bytes=buildDt1([record(1)]);

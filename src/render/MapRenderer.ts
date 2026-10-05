@@ -50,7 +50,10 @@ out vec2 vWorld;
 void main() {
   vec2 world = aDst.xy + aCorner * aDst.zw;
   vWorld = world;
-  vec2 screen = (world - uCamera.xy) * uCamera.z + uViewport * 0.5;
+  // The centre on a whole device pixel (an odd-sized canvas would put it on half of one): tile pixels then meet on
+  // pixel edges and each screen pixel samples the middle of a tile pixel. On a half pixel every sample sits on an edge
+  // between two tile pixels, and drivers that round it the other way (Mesa on Linux) double some and drop others.
+  vec2 screen = (world - uCamera.xy) * uCamera.z + floor(uViewport * 0.5);
   gl_Position = vec4(screen / uViewport * 2.0 - 1.0, 0.0, 1.0);
   gl_Position.y = -gl_Position.y;
   vTex = aSrc + aCorner * aDst.zw;

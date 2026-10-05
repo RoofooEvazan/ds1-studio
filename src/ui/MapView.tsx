@@ -1042,7 +1042,7 @@ function drawOverlay(canvas: HTMLCanvasElement, cam: Camera, s: OverlayState) {
   const { ds1 } = map;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(cam.zoom, 0, 0, cam.zoom, canvas.width / 2 - Math.round(cam.x * cam.zoom), canvas.height / 2 - Math.round(cam.y * cam.zoom));
+  ctx.setTransform(cam.zoom, 0, 0, cam.zoom, Math.floor(canvas.width / 2) - Math.round(cam.x * cam.zoom), Math.floor(canvas.height / 2) - Math.round(cam.y * cam.zoom));
   const px = 1 / cam.zoom; // one device pixel in world units
 
   if (s.automapImage) {

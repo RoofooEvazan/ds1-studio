@@ -77,8 +77,9 @@ export function LayersPanel({ map, scene, visibility: v, onChange, keys }: { map
         {ds1.floors.map((_, i) => (
           <Toggle key={`f${i}`} label={`Floor ${i + 1}`} hotkey={keys[(['layer.floor1', 'layer.floor2'] as const)[i]]} checked={v.floors[i]} onChange={(x) => setIdx('floors', i, x)} count={count('floor', i)} />
         ))}
-        {ds1.walls.map((_, i) => (
-          <Toggle key={`w${i}`} label={`Wall ${i + 1}`} hotkey={keys[(['layer.wall1', 'layer.wall2', 'layer.wall3', 'layer.wall4'] as const)[i]]} checked={v.walls[i]} onChange={(x) => setIdx('walls', i, x)} count={count('wall', i) + count('roof', i) + count('lowerWall', i)} />
+        {/* Wall layers 1-4 always: one the map doesn't have yet is empty until something is put on it. */}
+        {Array.from({ length: Math.max(4, ds1.walls.length) }, (_, i) => (
+          <Toggle key={`w${i}`} label={`Wall ${i + 1}`} hotkey={keys[(['layer.wall1', 'layer.wall2', 'layer.wall3', 'layer.wall4'] as const)[i]]} checked={v.walls[i] ?? true} onChange={(x) => setIdx('walls', i, x)} count={count('wall', i) + count('roof', i) + count('lowerWall', i)} />
         ))}
         <Toggle label="Shadows" hotkey={keys['layer.shadows']} checked={v.shadows} onChange={(x) => set({ shadows: x })} count={count('shadow')} />
         <Toggle label="Roofs" hotkey={keys['layer.roofs']} checked={v.roofs} onChange={(x) => set({ roofs: x })} count={count('roof')} />
@@ -358,7 +359,7 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
   const found = (o: number, c: TileCell) =>
     o === Orientation.SpecialTile1 || o === Orientation.SpecialTile2 || lib.variants(o, c.mainIndex, c.subIndex).length > 0 || (o === Orientation.Floor && c.mainIndex >= 30);
 
-  const rows = doc.layers().map((layer) => {
+  const rows = doc.editableLayers().map((layer) => {
     const c = doc.cell(layer, x, y);
     const orientation = layer.kind === 'wall' ? (c as WallCell).orientation : layer.kind === 'floor' ? Orientation.Floor : Orientation.Shadow;
     const empty = isEmptyCell(c);

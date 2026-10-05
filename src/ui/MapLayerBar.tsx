@@ -33,7 +33,8 @@ function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: D
   return <div className="map-layer-bar" role="group" aria-label="Map layer visibility">
     <span className="map-layer-label">Show</span>
     {ds1.floors.map((_, i) => <button key={`f${i}`} aria-pressed={v.floors[i] ?? true} title={`Show or hide floor layer ${i + 1}${soloTip}`} onClick={() => indexed('floors', i)} {...solo({ floor: i })}>Floor {i + 1}</button>)}
-    {ds1.walls.map((_, i) => <button key={`w${i}`} aria-pressed={v.walls[i] ?? true} title={`Show or hide wall layer ${i + 1}, including its upper walls, lower walls and roofs${soloTip}`} onClick={() => indexed('walls', i)} {...solo({ wall: i })}>Wall layer {i + 1}</button>)}
+    {/* Wall layers 1-4 always: one the map doesn't have yet is empty until something is put on it. */}
+    {Array.from({ length: Math.max(4, ds1.walls.length) }, (_, i) => <button key={`w${i}`} className={i < ds1.walls.length ? undefined : 'map-layer-unused'} aria-pressed={v.walls[i] ?? true} title={`Show or hide wall layer ${i + 1}, including its upper walls, lower walls and roofs${i < ds1.walls.length ? '' : ' (empty: the map gets this layer when you put a tile on it)'}${soloTip}`} onClick={() => indexed('walls', i)} {...solo({ wall: i })}>Wall layer {i + 1}</button>)}
     <span className="map-layer-separator" />
     {categories.map(([key, label]) => <button key={key} aria-pressed={v[key]} title={`Show or hide ${label.toLowerCase()}${key === 'shadows' || key === 'specials' ? '' : ' across the enabled wall layers'}${soloTip}`} onClick={() => onChange({ ...v, [key]: !v[key] })} {...solo(key)}>{label}</button>)}
     <span className="map-layer-separator" />

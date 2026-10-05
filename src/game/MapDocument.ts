@@ -1,4 +1,7 @@
-import { DEFAULT_PROP1, EMPTY_CELL, withTile, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
+import { DEFAULT_PROP1, EMPTY_CELL, isEmptyCell, withTile, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
+
+/** Wall layers a map can have; the editor always offers all of them. */
+const WALL_LAYERS = 4;
 
 export type LayerKind = 'floor' | 'wall' | 'shadow';
 
@@ -107,15 +110,54 @@ export class MapDocument {
     ];
   }
 
+  /**
+   * The layers the editor offers: the map's own, plus every wall layer up to 4. A wall layer the file doesn't have yet
+   * reads as empty and is added to the map when a tile is put on it (ensureLayer), so it can be shown, hidden and
+   * painted like the others without changing the file until it is used.
+   */
+  editableLayers(): LayerRef[] {
+    return [
+      ...this.ds1.floors.map((_, index) => ({ kind: 'floor' as const, index })),
+      ...Array.from({ length: Math.max(WALL_LAYERS, this.ds1.walls.length) }, (_, index) => ({ kind: 'wall' as const, index })),
+      ...this.ds1.shadows.map((_, index) => ({ kind: 'shadow' as const, index })),
+    ];
+  }
+
+  /** Whether the map (the file) has this layer. */
+  hasLayer(layer: LayerRef): boolean {
+    return !!this.layerList(layer)[layer.index];
+  }
+
+  /**
+   * Adds empty wall layers so that `layer` exists, as its own undo step (a stroke in progress goes on after it).
+   * Returns whether anything was added. Only wall layers are added this way, up to 4.
+   */
+  ensureLayer(layer: LayerRef): boolean {
+    if (layer.kind !== 'wall' || this.hasLayer(layer) || layer.index >= WALL_LAYERS) return false;
+    const stroke = this.stroke ? this.strokeLabel : null;
+    const from = this.ds1.walls.length;
+    this.mutate((d) => {
+      while (d.walls.length <= layer.index) d.walls.push(Array.from({ length: d.width * d.height }, () => ({ ...EMPTY_CELL, orientation: 0, orientationHigh: 0 })));
+    }, layer.index === from ? `Add wall layer ${layer.index + 1}` : `Add wall layers ${from + 1}–${layer.index + 1}`);
+    if (stroke !== null) this.beginStroke(stroke);
+    return true;
+  }
+
+  private layerList(layer: LayerRef): AnyCell[][] {
+    return layer.kind === 'floor' ? this.ds1.floors : layer.kind === 'wall' ? this.ds1.walls : this.ds1.shadows;
+  }
+
   private cells(layer: LayerRef): AnyCell[] {
-    const list = layer.kind === 'floor' ? this.ds1.floors : layer.kind === 'wall' ? this.ds1.walls : this.ds1.shadows;
-    const cells = list[layer.index];
+    const cells = this.layerList(layer)[layer.index];
     if (!cells) throw new Error(`no ${layerKey(layer)} layer`);
     return cells;
   }
 
+  /** A cell of a layer; empty for a wall layer the map doesn't have yet. */
   cell(layer: LayerRef, x: number, y: number): AnyCell {
-    return this.cells(layer)[y * this.ds1.width + x];
+    const cells = this.layerList(layer)[layer.index];
+    if (!cells) return layer.kind === 'wall' ? { ...EMPTY_CELL, orientation: 0, orientationHigh: 0 } : EMPTY_CELL;
+    return cells[y * this.ds1.width + x];
   }
 
   inBounds(x: number, y: number): boolean {
@@ -148,9 +190,12 @@ export class MapDocument {
    */
   apply(edits: CellEdit[], label = 'Edit tiles', file?: FileHistoryChange): boolean {
     if (file) { this.endStroke(); this.endObjectEdit(); }
+    // A tile put on a wall layer the map doesn't have yet adds that layer first (its own undo step).
+    for (const e of edits) if (!isEmptyCell(e.cell) && this.inBounds(e.x, e.y)) this.ensureLayer(e.layer);
     const applied: CellChange[] = [];
     for (const { layer, x, y, cell } of edits) {
-      if (!this.inBounds(x, y)) continue;
+      // Erasing on a layer the map doesn't have: nothing there to erase.
+      if (!this.inBounds(x, y) || !this.hasLayer(layer)) continue;
       const cells = this.cells(layer);
       const index = y * this.ds1.width + x;
       const before = cells[index];

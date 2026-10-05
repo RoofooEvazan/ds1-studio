@@ -1045,7 +1045,7 @@ export function App() {
       if (!doc || !scene || tool === 'object' || pasting) return;
       // A tile ready to paint: Shift+scroll picks the layer it goes on (the preview shows it in front or behind).
       if (tool === 'paint' && brush) {
-        const same = doc.layers().filter((l) => l.kind === activeLayer.kind);
+        const same = doc.editableLayers().filter((l) => l.kind === activeLayer.kind);
         const at = same.findIndex((l) => l.index === activeLayer.index);
         const next = same[Math.min(same.length - 1, Math.max(0, at + dir))];
         if (next && next.index !== activeLayer.index) {
@@ -3521,7 +3521,7 @@ export function App() {
   const workOn = useCallback(
     (layer: LayerRef) => {
       if (!doc) return;
-      if (!doc.layers().some((l) => l.kind === layer.kind && l.index === layer.index)) {
+      if (!doc.editableLayers().some((l) => l.kind === layer.kind && l.index === layer.index)) {
         notify(`This map has no ${layerLabel(layer)} layer.`);
         return;
       }
@@ -3740,7 +3740,8 @@ export function App() {
     return <SetupScreen state={data} onPick={pickFolders} />;
   }
 
-  const layers = doc?.layers() ?? [];
+  // Wall layers 1-4 are always offered: one the map doesn't have yet is added when something is painted on it.
+  const layers = doc?.editableLayers() ?? [];
   paletteState.current = { layers, tileSet };
   const title = map?.path.split('/').pop();
   const noMap = !doc || !map;

@@ -91,6 +91,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .map-layer-bar button { padding: 3px 7px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--muted); font-size: 11px; cursor: pointer; }
 .map-layer-bar button[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
 .map-layer-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.map-layer-bar button.map-layer-unused { border-style: dashed; }
 .map-layer-separator { height: 18px; border-left: 1px solid var(--border); margin: 0 3px; }
 .wall-category-options { width: 100%; font-size: 11px; }
 .wall-category-options summary { cursor: pointer; color: var(--muted); padding: 3px 0; }

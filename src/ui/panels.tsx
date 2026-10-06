@@ -1,3 +1,4 @@
+import { cellUnwalkableEdits, isCellUnwalkable } from '../game/cellFlags';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { decodeCell, isEmptyCell, withFields, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
 import { Orientation, type Dt1Tile } from '../formats/dt1';
@@ -495,6 +496,17 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
           </button>
         </div>
       )}
+      {editable && (
+        <label className="mini-check" title="Block walking on the whole cell with the map’s cell flag (on Floor 1, else the first layer with a tile), as WinDS1’s Ctrl+Shift+right-click: only this cell, no tile file, whatever floor layers it uses">
+          <input
+            type="checkbox"
+            checked={isCellUnwalkable(doc, x, y)}
+            disabled={!doc.layers().some((l) => l.kind !== 'shadow' && !isEmptyCell(doc.cell(l, x, y)))}
+            onChange={(e) => onEdit(cellUnwalkableEdits(doc, [[x, y]], e.target.checked).edits)}
+          />{' '}
+          Whole cell unwalkable <span className="muted small">(cell flag)</span>
+        </label>
+      )}
       {editable ? (
         <div className="cell-cards">{visible}</div>
       ) : visible.length ? (
@@ -551,13 +563,15 @@ interface SelectionPanelProps {
   onDeselect: () => void;
   onReroll: () => void;
   onReplace: () => void;
+  /** Makes the selected cells unwalkable (or walkable again) with the map's whole-cell flag. */
+  onUnwalkable: (on: boolean) => void;
   /** Objects and NPCs standing in the selection (they move with Cut / Paste). */
   objectCount: number;
   /** Set when one tile of a stack was chosen (Shift+wheel): copy/cut only take that layer. */
   onlyLayer?: LayerRef | null;
 }
 
-export function SelectionPanel({ selection, activeLayer, brush, canPaste, onFill, onClear, onCopy, onPaste, onDeselect, onReroll, onReplace, objectCount, onlyLayer }: SelectionPanelProps) {
+export function SelectionPanel({ selection, activeLayer, brush, canPaste, onFill, onClear, onCopy, onPaste, onDeselect, onReroll, onReplace, onUnwalkable, objectCount, onlyLayer }: SelectionPanelProps) {
   const [w, h] = rectSize(selection);
   const shape = selection.cells ? `${selectionCount(selection)} cells in ${w} × ${h}` : `${w} × ${h}`;
   const what = onlyLayer ? layerLabel(onlyLayer) : `all tile layers${objectCount ? ` and ${objectCount} object${objectCount === 1 ? '' : 's'}` : ''}`;
@@ -588,6 +602,12 @@ export function SelectionPanel({ selection, activeLayer, brush, canPaste, onFill
         </button>
         <button className="btn" onClick={onReplace} title="Swap one tile for another in the selection or the whole map">
           Find &amp; replace…
+        </button>
+        <button className="btn" onClick={() => onUnwalkable(true)} title="Block walking on the selected cells with the map’s whole-cell flag (on Floor 1), as WinDS1 does: only these cells change, no tile file, and it works whatever floor layers they use. Ctrl+Shift+right-click toggles one cell.">
+          Make unwalkable
+        </button>
+        <button className="btn" onClick={() => onUnwalkable(false)} title="Clear the whole-cell unwalkable flag from the selected cells (tiles' own walkability flags stay)">
+          Walkable again
         </button>
       </div>
       <p className="muted small">

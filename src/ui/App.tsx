@@ -165,6 +165,7 @@ import { overlayFlags, spawnLevelOf, spawnOverlay, walkableOverlay, type Overlay
 import { OverviewLegend } from './OverviewLegend';
 import { isBuiltinPath, PLACEABLE_SPECIALS, SPECIAL_TILES_DT1, specialTileInfo } from '../game/specialTiles';
 import { floodRegion, keyOf, objectInRect, paintEdits, rectCells, rerollEdits, stackPaintEdits, type TileKey } from '../game/editTools';
+import { cellUnwalkableEdits, isCellUnwalkable } from '../game/cellFlags';
 import { addRecentMap, pinnedTiles, recentMaps, recentTiles, reopenLast, setReopenLast, togglePinned, noteTileUse, type RecentMap } from '../app/prefs';
 import { deleteRecovery, getRecovery, listRecoveries, saveRecovery, type Recovery } from '../app/recovery';
 import { renderMapImage } from '../render/exportImage';
@@ -4116,6 +4117,27 @@ export function App() {
     notify(`${label} placed at cell ${x}, ${y} (Wall ${index + 1}) · Ctrl+Z to undo`);
   };
   /** The map's right-click menu for a cell. */
+  /** The cells a whole-cell action at `cell` works on: the selection when the cell is in it, else just that cell. */
+  const actionCells = (cell: [number, number]): [number, number][] =>
+    selection && inSelection(selection, cell[0], cell[1]) ? rectCells(selection).filter(([x, y]) => inSelection(selection, x, y)) : [cell];
+  /**
+   * Makes cells unwalkable (or walkable again) with the map's whole-cell flag, as WinDS1's Ctrl+Shift+right-click: only
+   * these cells, no tile file, whatever floor layers they use. One undo step.
+   */
+  const setUnwalkable = (cells: [number, number][], on: boolean) => {
+    if (!doc) return;
+    const r = cellUnwalkableEdits(doc, cells, on);
+    const label = on ? 'Make unwalkable (cell flag)' : 'Make walkable (cell flag)';
+    if (r.edits.length && doc.apply(r.edits, label)) bump();
+    const skipped = r.skipped ? ` · ${r.skipped} cell${r.skipped === 1 ? ' has' : 's have'} no tile to hold the flag (put a floor there first)` : '';
+    notify(r.cells ? `${r.cells} cell${r.cells === 1 ? '' : 's'} ${on ? 'unwalkable' : 'walkable again'} (cell flag)${skipped}` : `Nothing to change: ${on ? 'already unwalkable' : 'no cell flag here'}${skipped}`, !!r.skipped && !r.cells);
+  };
+  /** Ctrl+Shift+right-click: toggles the flag on the cell (or the selection it is in), by the cell's current state. */
+  const toggleUnwalkableAt = (cell: [number, number]) => {
+    if (!doc || !doc.inBounds(cell[0], cell[1])) return;
+    setUnwalkable(actionCells(cell), !isCellUnwalkable(doc, cell[0], cell[1]));
+  };
+
   const mapMenuEntries = (m: { cell: [number, number]; world: [number, number] }): (MenuEntry | null)[] => {
     if (!doc || !scene) return [];
     const [x, y] = m.cell;
@@ -4144,6 +4166,9 @@ export function App() {
               label: 'Place a special tile here',
               children: PLACEABLE_SPECIALS.map((sp) => ({ label: sp.label, title: sp.help, onClick: () => placeSpecial(x, y, sp.main, sp.sub, sp.label) })),
             },
+            isCellUnwalkable(doc, x, y)
+              ? { label: `Make walkable again (cell flag)${actionCells(m.cell).length > 1 ? ', selection' : ''}`, title: 'Clear the whole-cell unwalkable flag (Ctrl+Shift+right-click)', onClick: () => setUnwalkable(actionCells(m.cell), false) }
+              : { label: `Make unwalkable (cell flag)${actionCells(m.cell).length > 1 ? ', selection' : ''}`, title: 'Block walking on the whole cell with the map’s cell flag, as WinDS1 does: only these cells, no tile file (Ctrl+Shift+right-click)', onClick: () => setUnwalkable(actionCells(m.cell), true) },
             null,
           ]
         : []),
@@ -4299,7 +4324,7 @@ export function App() {
             fitSignal={fitSignal}
             zoomCommand={zoomCommand}
             snapshotRef={snapshotRef}
-            onContextMenu={(at, cell, world) => setMapMenu({ at, cell, world })}
+            onContextMenu={(at, cell, world, mods) => (mods?.ctrl && mods.shift ? toggleUnwalkableAt(cell) : setMapMenu({ at, cell, world }))}
             gameView={{ ...gameView, width: gameSize[0], height: gameSize[1] }}
             focus={focus}
             areaLayer={areaLayer}
@@ -4625,6 +4650,7 @@ export function App() {
                 onlyLayer={onlyLayer}
                 onReroll={rerollSelection}
                 onReplace={() => setDialog('replace')}
+                onUnwalkable={(on) => setUnwalkable(rectCells(selection).filter(([x, y]) => inSelection(selection, x, y)), on)}
                 objectCount={doc.ds1.objects.filter((o) => objectInRect(o, selection)).length}
                 onDeselect={() => {
                   setSelection(null);

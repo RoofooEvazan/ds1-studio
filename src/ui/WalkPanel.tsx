@@ -104,7 +104,8 @@ export function WalkPanel({ ds1, lib, scene, revision, hover, onPaint, brush, on
         <p className="small muted">
           {brush.target === 'tile'
             ? 'Like WinDS1: the flags are changed in the tiles’ own DT1s. No extra DT1 and never “full”, but every cell, in every map, that uses those tiles changes too. Adding flags puts them on the cell’s floor tile; removing takes them off every tile in the cell.'
-            : 'Only this map changes: blockers and tile copies go into its own walkability DT1. A cell whose two floor layers are both used can still be blocked whole (Cell brush) with the map’s whole-cell flag.'}
+            : 'Only this map changes: blockers and tile copies go into its own walkability DT1. A cell whose two floor layers are both used can still be blocked whole (Cell brush) with the map’s whole-cell flag.'}{' '}
+          To block whole cells with that flag straight away, no tile file (like WinDS1): <b>Ctrl+Shift+right-click</b> a cell, or select cells and use <b>Make unwalkable</b>.
         </p>
         {brush.target === 'tile' && tileFlags.pending > 0 && (
           <div className="imp-callout small">

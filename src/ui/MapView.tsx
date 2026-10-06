@@ -84,7 +84,8 @@ interface Props {
   /** Bumped by the parent to request "fit map to view". */
   fitSignal: number;
   /** A right-click that didn't drag (a drag pans): the screen point, the cell under it and its world position. */
-  onContextMenu?: (screen: [number, number], cell: [number, number], world: [number, number]) => void;
+  /** Right-click on the map (`mods`: Ctrl / Shift held, for Ctrl+Shift+right-click). */
+  onContextMenu?: (screen: [number, number], cell: [number, number], world: [number, number], mods?: { ctrl: boolean; shift: boolean }) => void;
   /** Receives a function that pictures the view exactly as shown (map, overlays, minimap) as a canvas. */
   snapshotRef?: MutableRefObject<(() => HTMLCanvasElement | null) | null>;
   /**
@@ -759,7 +760,7 @@ export function MapView(props: Props) {
         window.addEventListener('contextmenu', swallow, { capture: true, once: true });
         setTimeout(() => window.removeEventListener('contextmenu', swallow, { capture: true }), 400);
         // Barely moved: a click, which opens the map's menu instead of panning.
-        if (panStart && Math.hypot(ev.clientX - panStart.x, ev.clientY - panStart.y) < 5) latest.current.onContextMenu?.([ev.clientX, ev.clientY], toCell(ev), toWorld(ev));
+        if (panStart && Math.hypot(ev.clientX - panStart.x, ev.clientY - panStart.y) < 5) latest.current.onContextMenu?.([ev.clientX, ev.clientY], toCell(ev), toWorld(ev), { ctrl: ev.ctrlKey || ev.metaKey, shift: ev.shiftKey });
       }
       panStart = null;
       pan = null;

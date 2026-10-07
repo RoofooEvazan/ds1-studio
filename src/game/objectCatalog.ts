@@ -57,6 +57,8 @@ export interface CatalogEntry {
   row?: number;
   /** Objects: the light it gives off as placed. */
   light?: ObjectLight | null;
+  /** Objects: where the game draws it relative to where it stands, in pixels (objects.txt Xoffset / Yoffset). */
+  drawOffset?: [number, number];
 }
 
 /** "RogueFountain" -> "Rogue Fountain", "Torch1 Tiki" -> "Torch 1 Tiki", "place_champion" -> "Place champion". */
@@ -153,7 +155,7 @@ export function objectRowsByNumber(t: Pick<CatalogTables, 'objects'>): Map<numbe
       const desc = r['description - not loaded'] || r['Name'] || `Object ${row}`;
       // A custom object goes by the name it was given there.
       const custom = desc.startsWith(CUSTOM_OBJECT_MARK) ? desc.slice(CUSTOM_OBJECT_MARK.length) : null;
-      out.set(row, { name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row, light: objectLight(r) });
+      out.set(row, { name: custom ? `${custom} (custom, ${row})` : `${prettyName(desc)} (${row})`, spec: objectSpec(r), nameKey: r['Name'] ?? '', selectable: (r['Selectable0'] ?? '').trim() === '1', row, light: objectLight(r), drawOffset: [Number(r['Xoffset']) || 0, Number(r['Yoffset']) || 0] });
     });
   return out;
 }

@@ -7,7 +7,7 @@ import { wallCategory, wallLibraryKey, type WallCategory } from '../game/wallCat
 /** Always available above the map, including when the side panels are folded. */
 export const MapLayerBar = memo(MapLayerBarImpl);
 
-function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: Ds1; /** Changes when a layer is added or removed (the DS1 is edited in place). */ layerCount?: number; lib: TileLibrary; visibility: Visibility; onChange: (v: Visibility) => void; onSolo?: (slot: LayerSlot) => void }) {
+function MapLayerBarImpl({ ds1, visibility: v, onChange, onSolo }: { ds1: Ds1; /** Changes when a layer is added or removed (the DS1 is edited in place). */ layerCount?: number; lib: TileLibrary; visibility: Visibility; onChange: (v: Visibility) => void; onSolo?: (slot: LayerSlot) => void }) {
   /** Middle click: show only this layer (again: back as it was). */
   const solo = (slot: LayerSlot) => ({
     onMouseDown: (e: React.MouseEvent) => {
@@ -20,10 +20,6 @@ function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: D
     },
   });
   const soloTip = onSolo ? ' · middle-click: show only this (again: back as it was)' : '';
-  const libraries = useMemo(() => lib.loaded.map(source => {
-    const tiles = lib.tilesOf(source.path).filter(t => wallCategory(t.orientation));
-    return {path:source.path,tiles};
-  }).filter(source => source.tiles.length), [lib]);
   const indexed = (key: 'floors' | 'walls', index: number) => {
     const values = [...v[key]];
     values[index] = !(values[index] ?? true);
@@ -40,8 +36,20 @@ function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: D
     <span className="map-layer-separator" />
     <button aria-pressed={v.objectsLayer} title="Show or hide objects and NPCs (markers, sprites and paths). Hidden, they stay where they are when you copy, cut or clear an area. The Objects tool always shows them." onClick={() => onChange({ ...v, objectsLayer: !v.objectsLayer })}>Objects</button>
     <button aria-pressed={v.lightRings} title="Show how far each object's light reaches (torches, fires, candles, invisible light sources): a ring in its colour around it, where the light fades out. View → Level light shows the light itself." onClick={() => onChange({ ...v, lightRings: !v.lightRings })}>Lights</button>
-    <details className="wall-category-options">
-      <summary>DT1 wall categories</summary>
+  </div>;
+}
+
+/**
+ * Which visibility group (Upper / Lower walls) each library's wall tiles belong to: automatic from the DT1's tile type,
+ * or overridden per library. An editor preference (View → Wall categories…); game files stay unchanged.
+ */
+export function WallCategories({ lib, visibility: v, onChange }: { lib: TileLibrary; visibility: Visibility; onChange: (v: Visibility) => void }) {
+  const libraries = useMemo(() => lib.loaded.map(source => {
+    const tiles = lib.tilesOf(source.path).filter(t => wallCategory(t.orientation));
+    return {path:source.path,tiles};
+  }).filter(source => source.tiles.length), [lib]);
+  return (
+    <div className="wall-category-options">
       <div className="wall-category-list">
         <p>Upper/Lower are visibility groups, separate from W1–W4. Automatic uses the DT1 tile type. Override a library here when its artwork belongs in a different group. This saves an editor preference; game files stay unchanged.</p>
         {libraries.map(({path,tiles}) => {
@@ -58,6 +66,6 @@ function MapLayerBarImpl({ ds1, lib, visibility: v, onChange, onSolo }: { ds1: D
           </label>;
         })}
       </div>
-    </details>
-  </div>;
+    </div>
+  );
 }

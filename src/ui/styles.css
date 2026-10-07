@@ -95,7 +95,7 @@ code, .mono { font-family: var(--mono); font-size: 12px; }
 .map-layer-separator { height: 18px; border-left: 1px solid var(--border); margin: 0 3px; }
 .wall-category-options { width: 100%; font-size: 11px; }
 .wall-category-options summary { cursor: pointer; color: var(--muted); padding: 3px 0; }
-.wall-category-list { max-height: 180px; overflow: auto; padding: 2px 5px; }
+.wall-category-list { max-height: 60vh; overflow: auto; padding: 2px 5px; }
 .wall-category-list p { color: var(--muted); margin: 4px 0 8px; }
 .wall-category-row { display: flex; align-items: center; gap: 8px; justify-content: space-between; padding: 5px 0; border-top: 1px solid var(--border); }
 .wall-category-row span { min-width: 0; overflow-wrap: anywhere; }
@@ -688,7 +688,8 @@ kbd { display: inline-block; min-width: 22px; padding: 2px 7px; font: 600 11px/1
 .cell-thumb > * { width: 100%; }
 .cell-card-title { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; font-size: 12px; }
 .cell-card-title .tile-src { align-self: flex-start; }
-.cell-card-head .icon-btn { margin-left: auto; }
+.cell-card-head .icon-btn { margin-left: 0; }
+.cell-card-head .cell-card-title { flex: 1; min-width: 0; }
 .cell-field { grid-template-columns: 118px 1fr; }
 .cell-field-input { display: flex; align-items: center; }
 .cell-field-input > select { width: 100%; }
@@ -1151,3 +1152,16 @@ footer .status-zoom { color: inherit; font: inherit; padding: 0; }
 .reassign-bad { box-shadow: inset 0 0 0 1px var(--error); }
 .reassign-foot { display: flex; flex-direction: column; gap: 4px; }
 .reassign-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.cell-card-details > summary { cursor: pointer; margin: 4px 0 2px; display: flex; gap: 6px; align-items: center; }
+.cell-card-details[open] > summary { margin-bottom: 6px; }
+
+/* Right-hand column: one panel at a time, picked with vertical tabs on its edge. */
+.sidebar.right:has(> .side-tabbed) { overflow: hidden; display: flex; flex-direction: column; }
+.side-tabbed { flex: 1; min-height: 0; display: flex; }
+.side-tab-body { flex: 1; min-width: 0; overflow-y: auto; }
+.side-tab-pane .thumb-grid { max-height: none; resize: none; }
+.side-vtabs { flex: 0 0 38px; display: flex; flex-direction: column; gap: 2px; padding: 6px 3px; border-left: 1px solid var(--border); background: var(--panel-2); }
+.side-vtabs button { position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; background: none; color: var(--muted); cursor: pointer; }
+.side-vtabs button:hover { color: var(--text); background: var(--panel); }
+.side-vtabs button.active { color: var(--accent-text); background: var(--accent-dim); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.side-vtab-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }

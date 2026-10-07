@@ -1,5 +1,4 @@
-import { cellUnwalkableEdits, isCellUnwalkable } from '../game/cellFlags';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { decodeCell, isEmptyCell, withFields, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
 import { Orientation, type Dt1Tile } from '../formats/dt1';
 import { PALETTE_NAMES } from '../formats/palette';
@@ -20,8 +19,23 @@ import type { HoverInfo } from './MapView';
 import { ORIENTATION_NAMES, type Visibility } from './state';
 import { wallCategory } from '../game/wallCategories';
 
+/** Set by the side column's tabs: a panel there is the whole tab, so it is always open (no fold). */
+export const PanelTabContext = createContext(false);
+
 function Panel({ title, extra, children, defaultOpen = true }: { title: string; extra?: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+  const [openState, setOpen] = useState(defaultOpen);
+  const inTab = useContext(PanelTabContext);
+  const open = inTab || openState;
+  if (inTab)
+    return (
+      <section className="panel">
+        <div className="panel-header static">
+          <span>{title}</span>
+          {extra && <span className="muted small">{extra}</span>}
+        </div>
+        <div className="panel-body">{children}</div>
+      </section>
+    );
   return (
     <section className="panel">
       <button className="panel-header" onClick={() => setOpen(!open)}>
@@ -365,6 +379,14 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
     const orientation = layer.kind === 'wall' ? (c as WallCell).orientation : layer.kind === 'floor' ? Orientation.Floor : Orientation.Shadow;
     const empty = isEmptyCell(c);
     const set = (next: TileCell | WallCell) => onEdit([{ layer, x, y, cell: next }]);
+    /** Moves this cell's tile to another layer of its kind, swapping with the tile there (one undo step). */
+    const moveTo = (index: number) => {
+      const target = { ...layer, index };
+      onEdit([
+        { layer, x, y, cell: doc.cell(target, x, y) },
+        { layer: target, x, y, cell: c },
+      ]);
+    };
     const label = layerLabel(layer);
     const drawn = empty ? null : drawnTile(scene, layer, x, y);
     const src = drawn && lib.sourceOf(drawn);
@@ -422,10 +444,24 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
             </span>
             {source}
           </div>
+          {layer.kind !== 'shadow' && (
+            <>
+              <button className="icon-btn" disabled={layer.index === 0} title={`Move this tile up a layer, to ${layerLabel({ ...layer, index: layer.index - 1 })} (swaps with the tile there): lower layers are drawn first, behind`} onClick={() => moveTo(layer.index - 1)}>
+                ↑
+              </button>
+              <button className="icon-btn" disabled={layer.index >= (layer.kind === 'wall' ? 3 : 1)} title={layer.index >= (layer.kind === 'wall' ? 3 : 1) ? 'Already on the last layer' : `Move this tile down a layer, to ${layerLabel({ ...layer, index: layer.index + 1 })} (swaps with the tile there): higher layers are drawn later, in front`} onClick={() => moveTo(layer.index + 1)}>
+                ↓
+              </button>
+            </>
+          )}
           <button className="icon-btn" title="Clear this layer here" onClick={() => set(MapDocument.painted(layer, c, null))}>
             ×
           </button>
         </div>
+        <details className="cell-card-details">
+          <summary className="small muted">
+            Details{(c.prop3 & 0x02) !== 0 && <span className="badge">unwalkable cell</span>}
+          </summary>
         <div className="ts-fields">
           {layer.kind === 'wall' && (
             <CellField label="Kind (orientation)" help={CELL_HELP.kind}>
@@ -453,6 +489,9 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
           <CellField label="Hidden in game" help={CELL_HELP.hidden}>
             <input type="checkbox" checked={c.hidden} onChange={(e) => set(withFields(c, { hidden: e.target.checked }))} />
           </CellField>
+          <CellField label="Unwalkable cell (flag)" help="The map’s whole-cell flag on this tile (bit 17, as WinDS1’s Ctrl+Shift+right-click sets): the game blocks walking on the whole cell. Only this cell, no tile file. Ctrl+Shift+right-click the map toggles it too.">
+            <input type="checkbox" checked={(c.prop3 & 0x02) !== 0} onChange={(e) => set({ ...c, prop3: e.target.checked ? c.prop3 | 0x02 : c.prop3 & ~0x02 } as TileCell)} />
+          </CellField>
           <CellField label="Raw bytes" help={CELL_HELP.raw}>
             <RawBytes cell={c} onCommit={(next) => set(layer.kind === 'wall' ? { ...(c as WallCell), ...next } : next)} />
           </CellField>
@@ -467,6 +506,7 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
             source={src.path.replace(/^data\/global\/tiles\//i, '')}
           />
         )}
+        </details>
       </div>
     );
   });
@@ -495,17 +535,6 @@ export function CellPanel({ map, doc, cell, editable, onEdit, onMutate, scene, o
             {tileFlags.saving ? 'Saving…' : 'Save DT1s to mod'}
           </button>
         </div>
-      )}
-      {editable && (
-        <label className="mini-check" title="Block walking on the whole cell with the map’s cell flag (on Floor 1, else the first layer with a tile), as WinDS1’s Ctrl+Shift+right-click: only this cell, no tile file, whatever floor layers it uses">
-          <input
-            type="checkbox"
-            checked={isCellUnwalkable(doc, x, y)}
-            disabled={!doc.layers().some((l) => l.kind !== 'shadow' && !isEmptyCell(doc.cell(l, x, y)))}
-            onChange={(e) => onEdit(cellUnwalkableEdits(doc, [[x, y]], e.target.checked).edits)}
-          />{' '}
-          Whole cell unwalkable <span className="muted small">(cell flag)</span>
-        </label>
       )}
       {editable ? (
         <div className="cell-cards">{visible}</div>

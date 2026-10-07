@@ -66,7 +66,7 @@ export class GameData {
   readonly lvlTypes: LvlTypeInfo[] = [];
   readonly warnings: string[] = [];
   /** "act:type:id" -> name and sprite recipe, from the game's own tables (acts 1-based; see objectCatalog). */
-  private objRows = new Map<string, { name: string; spec: SpriteSpec | null; nameKey?: string; selectable?: boolean; row?: number; light?: ObjectLight | null }>();
+  private objRows = new Map<string, { name: string; spec: SpriteSpec | null; nameKey?: string; selectable?: boolean; row?: number; light?: ObjectLight | null; drawOffset?: [number, number] }>();
   /** objects.txt rows by record number, for DS1 object ids of 150 and up (row = id - 150). */
   private objByRow = new Map<number, ObjectRowEntry>();
   private sprites = new Map<string, Promise<Sprite | null>>();
@@ -110,7 +110,7 @@ export class GameData {
     if (!presets) gd.warnings.push('The object table wasn’t found in D2Common.dll or Game.exe; objects are shown by number.');
     gd.objByRow = objectRowsByNumber({ objects });
     for (const e of buildCatalog(presets, { objects, monPreset, monStats, monStats2, superUniques })) {
-      gd.objRows.set(`${e.act}:${e.type}:${e.id}`, { name: e.name, spec: e.spec, nameKey: e.nameKey, selectable: e.selectable, row: e.row, light: e.light });
+      gd.objRows.set(`${e.act}:${e.type}:${e.id}`, { name: e.name, spec: e.spec, nameKey: e.nameKey, selectable: e.selectable, row: e.row, light: e.light, drawOffset: e.drawOffset });
     }
 
     for (const row of types?.rows ?? []) {
@@ -263,16 +263,23 @@ export class GameData {
   /** Still frame of an object's sprite (cached), or null when obj.txt has no recipe or the files are missing. */
   /** All frames of an object's/NPC's default animation (for animating them on the map), or null. */
   objectAnimation(act0: number, type: number, id: number): Promise<SpriteAnimation | null> {
-    const spec = this.objRow(act0, type, id)?.spec;
-    return spec ? loadSpriteAnimation(this.fs, spec) : Promise.resolve(null);
+    const r = this.objRow(act0, type, id);
+    if (!r?.spec) return Promise.resolve(null);
+    const [dx, dy] = r.drawOffset ?? [0, 0];
+    return loadSpriteAnimation(this.fs, r.spec).then((a) => (a && (dx || dy) ? shiftAnimation(a, dx, dy) : a));
   }
 
+  /**
+   * Still frame of an object's sprite (cached), placed where the game draws it (objects.txt Xoffset / Yoffset: a
+   * chandelier hangs 130 pixels up), or null when obj.txt has no recipe or the files are missing.
+   */
   objectSprite(act0: number, type: number, id: number): Promise<Sprite | null> {
     const key = `${act0}:${type}:${id}`;
     let p = this.sprites.get(key);
     if (!p) {
-      const spec = this.objRow(act0, type, id)?.spec;
-      p = spec ? loadObjectSprite(this.fs, spec) : Promise.resolve(null);
+      const r = this.objRow(act0, type, id);
+      const [dx, dy] = r?.drawOffset ?? [0, 0];
+      p = r?.spec ? loadObjectSprite(this.fs, r.spec).then((s) => (s && (dx || dy) ? { ...s, offsetX: s.offsetX + dx, offsetY: s.offsetY + dy } : s)) : Promise.resolve(null);
       this.sprites.set(key, p);
     }
     return p;
@@ -494,4 +501,10 @@ function hash(n: number): number {
   n = Math.imul(n ^ (n >>> 16), 0x45d9f3b);
   n = Math.imul(n ^ (n >>> 16), 0x45d9f3b);
   return (n ^ (n >>> 16)) >>> 0;
+}
+
+/** An animation drawn `dx`, `dy` pixels away from where its object stands (objects.txt Xoffset / Yoffset). */
+function shiftAnimation(a: SpriteAnimation, dx: number, dy: number): SpriteAnimation {
+  const move = <T extends { offsetX: number; offsetY: number }>(f: T): T => ({ ...f, offsetX: f.offsetX + dx, offsetY: f.offsetY + dy });
+  return { ...a, offsetX: a.offsetX + dx, offsetY: a.offsetY + dy, frames: a.frames.map(move), parts: a.parts.map((ps) => ps.map((p) => ({ ...p, image: move(p.image) }))) };
 }

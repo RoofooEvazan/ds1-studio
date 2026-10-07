@@ -2,6 +2,7 @@ import { DEFAULT_PROP1, EMPTY_CELL, isEmptyCell, withTile, type Ds1, type Ds1Obj
 
 /** Wall layers a map can have; the editor always offers all of them. */
 const WALL_LAYERS = 4;
+const FLOOR_LAYERS = 2;
 
 export type LayerKind = 'floor' | 'wall' | 'shadow';
 
@@ -129,16 +130,19 @@ export class MapDocument {
   }
 
   /**
-   * Adds empty wall layers so that `layer` exists, as its own undo step (a stroke in progress goes on after it).
-   * Returns whether anything was added. Only wall layers are added this way, up to 4.
+   * Adds empty layers so that `layer` exists, as its own undo step (a stroke in progress goes on after it). Returns
+   * whether anything was added. Wall layers go up to 4, floor layers to 2; shadows aren't added.
    */
   ensureLayer(layer: LayerRef): boolean {
-    if (layer.kind !== 'wall' || this.hasLayer(layer) || layer.index >= WALL_LAYERS) return false;
+    const max = layer.kind === 'wall' ? WALL_LAYERS : layer.kind === 'floor' ? FLOOR_LAYERS : 0;
+    if (this.hasLayer(layer) || layer.index >= max) return false;
     const stroke = this.stroke ? this.strokeLabel : null;
-    const from = this.ds1.walls.length;
+    const from = this.layerList(layer).length;
+    const kind = layer.kind === 'wall' ? 'wall' : 'floor';
     this.mutate((d) => {
-      while (d.walls.length <= layer.index) d.walls.push(Array.from({ length: d.width * d.height }, () => ({ ...EMPTY_CELL, orientation: 0, orientationHigh: 0 })));
-    }, layer.index === from ? `Add wall layer ${layer.index + 1}` : `Add wall layers ${from + 1}–${layer.index + 1}`);
+      const list = kind === 'wall' ? d.walls : d.floors;
+      while (list.length <= layer.index) list.push(Array.from({ length: d.width * d.height }, () => (kind === 'wall' ? { ...EMPTY_CELL, orientation: 0, orientationHigh: 0 } : EMPTY_CELL)));
+    }, layer.index === from ? `Add ${kind} layer ${layer.index + 1}` : `Add ${kind} layers ${from + 1}–${layer.index + 1}`);
     if (stroke !== null) this.beginStroke(stroke);
     return true;
   }
@@ -153,7 +157,7 @@ export class MapDocument {
     return cells;
   }
 
-  /** A cell of a layer; empty for a wall layer the map doesn't have yet. */
+  /** A cell of a layer; empty for a layer the map doesn't have yet. */
   cell(layer: LayerRef, x: number, y: number): AnyCell {
     const cells = this.layerList(layer)[layer.index];
     if (!cells) return layer.kind === 'wall' ? { ...EMPTY_CELL, orientation: 0, orientationHigh: 0 } : EMPTY_CELL;

@@ -65,6 +65,10 @@ import {
   Type as TypeIcon,
   Route,
   Skull,
+  SquareMousePointer,
+  History as HistoryIcon,
+  Tags,
+  Layers as LayersIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ds1FileToDt1Path, EMPTY_CELL, isEmptyCell, parseDs1, withTile, writeDs1, WRITE_VERSION, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
@@ -87,10 +91,10 @@ import { canPickFolders, loadFromDevServer, sourcesFromDirectory } from '../vfs/
 import { devServerSaveTarget, directorySaveTarget, downloadFile, exportBytes, importMany, importNamed, type SaveTarget } from '../vfs/save';
 import { LayeredFs, normalizePath, type FileSource } from '../vfs/vfs';
 import { FileBrowser } from './FileBrowser';
-import { MapLayerBar } from './MapLayerBar';
+import { MapLayerBar, WallCategories } from './MapLayerBar';
 import { readWallCategories } from '../game/wallCategories';
 import { isVisible, MapView, type GhostTile, type HoverInfo, type StrokeMods, type StrokePhase } from './MapView';
-import { CellPanel, GroupsPanel, HistoryPanel, LayersPanel, lightMultiplier, MapInfoPanel, MapObjectsPanel, SelectionPanel, type LevelLight } from './panels';
+import { CellPanel, GroupsPanel, HistoryPanel, LayersPanel, lightMultiplier, MapInfoPanel, MapObjectsPanel, PanelTabContext, SelectionPanel, type LevelLight } from './panels';
 import { allLayersShown, DEFAULT_VISIBILITY, isSolo, modeOf, nextView, oneMode, soloLayer, TOOLS, VIEW_NAMES, withMode, type LayerSlot, type Tool, type ViewMode, type Visibility } from './state';
 import { AutomapLegend, LightPanel, ModeFrame, RoofPanel } from './ModePanels';
 import { DEFAULT_AUTOMAP_STYLE, kindClassifier, normalizeAutomapStyle, type AutomapStyle } from '../game/automapStyle';
@@ -245,6 +249,17 @@ function selectionLabel(s: CellSelection): string {
 
 /** 100%, 300%, 50%, 12.5%… */
 const formatZoom = (z: number) => `${+(z * 100).toFixed(z < 0.1 ? 2 : 1)}%`;
+
+/** The right-hand column's panels, one at a time (vertical tabs). */
+const SIDE_TABS = [
+  { id: 'tiles', title: 'Tiles and presets (Objects & NPCs in Objects mode)', Icon: LayoutGrid },
+  { id: 'cell', title: 'Cell: the tiles of the hovered or selected cell, and the selection', Icon: SquareMousePointer },
+  { id: 'history', title: 'History: undo steps', Icon: HistoryIcon },
+  { id: 'groups', title: 'Tags & groups', Icon: Tags },
+  { id: 'layers', title: 'Layers: what the map shows', Icon: LayersIcon },
+  { id: 'map', title: 'Map: size, level, tile libraries, palette', Icon: MapIcon },
+] as const;
+type SideTab = (typeof SIDE_TABS)[number]['id'];
 
 export function App() {
   const [data, setData] = useState<DataState>({ status: 'connecting' });
@@ -514,6 +529,24 @@ export function App() {
     }
   }, [leftCollapsed]);
   /** The side panels folded away to a thin strip at the right edge (remembered too). */
+  /** View → Wall categories… (which libraries' walls are Upper or Lower walls). */
+  const [wallCatsOpen, setWallCatsOpen] = useState(false);
+  /** The side panel shown in the right-hand column (vertical tabs), remembered between sessions. */
+  const [rightTab, setRightTab] = useState<SideTab>(() => {
+    try {
+      const t = localStorage.getItem('ds1studio.rightTab');
+      return SIDE_TABS.some((x) => x.id === t) ? (t as SideTab) : 'tiles';
+    } catch {
+      return 'tiles';
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem('ds1studio.rightTab', rightTab);
+    } catch {
+      // per-viewer convenience only
+    }
+  }, [rightTab]);
   const [rightCollapsed, setRightCollapsed] = useState(() => {
     try {
       return localStorage.getItem('ds1studio.rightCollapsed') === '1';
@@ -3915,6 +3948,7 @@ export function App() {
             { label: 'Sprites', icon: <Box />, onClick: () => setVisibility((v) => ({ ...v, sprites: !v.sprites })), active: visibility.sprites, disabled: noMap, size: 'sm', shortcut: kb['view.sprites'], title: 'Draw objects and NPCs as they look in game' },
             { label: 'Markers', icon: <Eye />, onClick: () => setVisibility((v) => ({ ...v, objects: !v.objects })), active: visibility.objects, disabled: noMap, size: 'sm', shortcut: kb['view.markers'], title: 'Object and NPC markers' },
             { label: 'As if inside', icon: <EyeOff />, onClick: () => setVisibility((v) => ({ ...v, popsInside: !v.popsInside })), active: visibility.popsInside, disabled: noMap, size: 'sm', shortcut: kb['view.popsInside'], title: 'Hide the roofs of every hide area, as the game does while a player is inside: clicks then reach the floors under them' },
+            { label: 'Wall categories…', icon: <BrickWall />, onClick: () => setWallCatsOpen(true), disabled: noMap, size: 'sm', title: 'Which wall tiles count as Upper or Lower walls (the toggles above the map), library by library' },
           ],
         },
         {
@@ -4157,6 +4191,7 @@ export function App() {
               label: 'Cell details',
               onClick: () => {
                 selectCell();
+                setRightTab('cell');
                 exitMode();
                 setRightCollapsed(false);
               },
@@ -4494,7 +4529,8 @@ export function App() {
           </ModeFrame>
         )}
         {map && scene && doc && (viewMode === 'tiles' || viewMode === 'objects') && (
-          <>
+          <div className="side-tabbed">
+            <div className="side-tab-body">
             {clipPane && clipboard && (
               <ClipboardPanel
                 clip={clipboard}
@@ -4510,6 +4546,7 @@ export function App() {
                 }}
               />
             )}
+            <div className="side-tab-pane" hidden={rightTab !== 'tiles'}>
             {tool === 'object' && (
               <section className="panel object-preview-panel">
                 <div className="panel-header static">
@@ -4637,6 +4674,9 @@ export function App() {
                 onToggleFavourite={paletteToggleFavourite}
               />
             </section>
+            </div>
+            <PanelTabContext.Provider value={true}>
+            <div className="side-tab-pane" hidden={rightTab !== 'cell'}>
             {selection && !isSingleCell(selection) && (
               <SelectionPanel
                 selection={selection}
@@ -4667,7 +4707,10 @@ export function App() {
               onEdit={applyEdits}
               onMutate={mutate}
               scene={scene}
-              onFocusTile={focusTile}
+              onFocusTile={(t, l) => {
+                focusTile(t, l);
+                setRightTab('tiles');
+              }}
               onlyLayer={onlyLayer}
               brush={brush}
               tileFlags={{
@@ -4683,6 +4726,8 @@ export function App() {
               }}
               warps={{ links, onOpen: (p) => void open(p), onEdit: (vis) => setWarpEdit(vis) }}
             />
+            </div>
+            <div className="side-tab-pane" hidden={rightTab !== 'history'}>
             <HistoryPanel
               doc={doc}
               revision={revision}
@@ -4691,20 +4736,47 @@ export function App() {
                 void replayHistory(delta < 0 ? 'undo' : 'redo', Math.abs(delta));
               }}
             />
+            </div>
+            <div className="side-tab-pane" hidden={rightTab !== 'groups'}>
             <GroupsPanel ds1={map.ds1} selection={selection} onMutate={mutate} onShowGroups={() => setVisibility((v) => ({ ...v, groups: true }))} />
+            </div>
+            <div className="side-tab-pane" hidden={rightTab !== 'layers'}>
             <LayersPanel map={map} scene={scene} visibility={visibility} onChange={setVisibility} keys={kb} />
+            </div>
+            <div className="side-tab-pane" hidden={rightTab !== 'map'}>
             <MapInfoPanel
               map={map}
               gd={data.gd}
               onReopen={reresolve}
               onPalette={(act) => void withPalette(data.gd, map, act).then(setMap)}
             />
-          </>
+            </div>
+            </PanelTabContext.Provider>
+            </div>
+            <nav className="side-vtabs" aria-label="Side panels">
+              {SIDE_TABS.map((t) => (
+                <button key={t.id} className={rightTab === t.id ? 'active' : ''} aria-pressed={rightTab === t.id} title={t.id === 'tiles' && tool === 'object' ? 'Objects & NPCs' : t.title} onClick={() => setRightTab(t.id)}>
+                  <t.Icon size={17} />
+                  {t.id === 'cell' && selection && <span className="side-vtab-dot" title="A selection is active" />}
+                </button>
+              ))}
+            </nav>
+          </div>
         )}
         </ErrorBoundary>
         </>
         )}
       </aside>
+      {wallCatsOpen && map && (
+        <Modal title="Wall categories" onClose={() => setWallCatsOpen(false)}>
+          <WallCategories lib={map.lib} visibility={visibility} onChange={setVisibility} />
+          <div className="modal-actions">
+            <button className="btn primary" onClick={() => setWallCatsOpen(false)}>
+              Done
+            </button>
+          </div>
+        </Modal>
+      )}
       {presetSave && map && (
         <SavePresetDialog
           clip={presetSave.clip}

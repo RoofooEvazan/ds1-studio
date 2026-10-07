@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { GameData } from '../src/game/GameData';
+import { objectRowsByNumber } from '../src/game/objectCatalog';
+import type { TxtTable } from '../src/formats/txt';
 import { loadObjectSprite } from '../src/game/sprites';
 import { loadSpriteAnimation } from '../src/game/spriteAnim';
 import { LayeredFs, MpqSource } from '../src/vfs/vfs';
 import { NodeFileAccess } from '../tools/nodeAccess';
 import { binarySource, D2_DIR, hasD2 } from '../tools/testdata';
+
+describe('objects.txt draw offsets', () => {
+  it('reads Xoffset / Yoffset for each row (0 when blank)', () => {
+    const objects = { rows: [{ Name: 'chan', Token: '2z', Xoffset: '', Yoffset: '-130' }, { Name: 'Expansion' }, { Name: 'door', Token: 'D1', Xoffset: '1', Yoffset: '4' }] } as unknown as TxtTable;
+    const rows = objectRowsByNumber({ objects });
+    expect([rows.get(0)?.drawOffset, rows.get(1)?.drawOffset]).toEqual([[0, -130], [1, 4]]);
+  });
+});
 
 if (hasD2)
   describe('objects drawn where the game draws them (objects.txt Xoffset / Yoffset)', async () => {

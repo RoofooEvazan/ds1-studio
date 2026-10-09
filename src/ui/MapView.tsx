@@ -11,7 +11,7 @@ import type { SpriteAnimation } from '../game/spriteAnim';
 import { AUTOMAP_CODES, AUTOMAP_SCALE, type AutomapPiece } from '../game/automap';
 import { automapCanvas, type AutomapKind, type AutomapStyle, type DrawPiece } from '../game/automapStyle';
 import type { SpriteFrame } from '../formats/dc6';
-import { cellToWorld, SubTileFlag, subTileToWorld, walkability, worldToCell, worldToSubTile, type DrawItem, type Scene } from '../render/scene';
+import { cellToWorld, SubTileFlag, subTileToWorld, worldToCell, worldToSubTile, type DrawItem, type Scene } from '../render/scene';
 import type { Tool, Visibility } from './state';
 import { specialTileInfo } from '../game/specialTiles';
 import { Minimap } from './Minimap';
@@ -21,7 +21,7 @@ import { canvasToWorld } from '../render/inputProjection';
 import { combinedCellAt, cycleWithWheel, tileEmphasis } from '../game/mapSelection';
 import { wallCategory } from '../game/wallCategories';
 import { stepAtOrBelow, stepZoom, WheelSteps } from './zoomSteps';
-import type { MapOverlay } from '../game/mapOverlays';
+import { overlayFlags, type MapOverlay } from '../game/mapOverlays';
 import { drawSubTilePaths, overlayPaths, subTilePaths, type SubTilePaths } from '../render/overlay';
 
 export interface HoverInfo {
@@ -229,7 +229,8 @@ export function MapView(props: Props) {
   const [frame, setFrame] = useState(0);
   const automapImage = useMemo(() => (props.automap ? renderAutomap(map.ds1.width, map.ds1.height, props.automap) : null), [props.automap, map]);
   // Built once per scene, not per frame: a 150×150 map has 562,500 sub-tiles.
-  const walk = useMemo(() => (visibility.walkable ? walkPaths(walkability(map.ds1, scene, map.lib), map.ds1.width, map.ds1.height) : null), [visibility.walkable, map, scene]);
+  // As the game builds collision: an empty cell is open ground unless LvlPrest FillBlanks puts a blocking blank tile there.
+  const walk = useMemo(() => (visibility.walkable ? walkPaths(overlayFlags(map.ds1, scene, map.lib, map.resolution.preset), map.ds1.width, map.ds1.height) : null), [visibility.walkable, map, scene]);
   const overviewPaths = useMemo(() => (props.overview ? overlayPaths(props.overview, map.ds1.width) : null), [props.overview, map]);
   const resizeDrag = useRef<{ side: Side; delta: ResizeDelta } | null>(null);
   /** The sub-tile under the cursor in walkability mode (drawn as the brush's footprint). */

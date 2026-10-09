@@ -1,11 +1,14 @@
 import { useMemo, useRef, useState } from 'react';
 import type { Ds1 } from '../formats/ds1';
 import type { TileLibrary } from '../game/GameData';
-import { walkability, worldToSubTile, type Scene } from '../render/scene';
+import { worldToSubTile, type Scene } from '../render/scene';
+import { overlayFlags } from '../game/mapOverlays';
+import type { PresetInfo } from '../game/GameData';
 import { collisionHex, describeCollision } from '../game/collisionFlags';
 import type { WalkPaint } from '../game/walkEdit';
 import { WALK_FLAGS } from '../game/walkEdit';
 import { HelpTip } from './HelpTip';
+import { emptyCells } from '../game/cellFlags';
 
 export type WalkBrushSize = 1 | 3 | 5 | 'cell';
 
@@ -22,6 +25,8 @@ interface Props {
   ds1: Ds1;
   lib: TileLibrary;
   scene: Scene;
+  /** The map's LvlPrest row (FillBlanks decides what empty cells are in game). */
+  preset?: PresetInfo | null;
   revision: number;
   hover: { cellX: number; cellY: number; world?: [number, number] } | null;
   onPaint: (paint: WalkPaint) => void;
@@ -35,6 +40,10 @@ interface Props {
   last: string | null;
   /** Tile flag changes waiting to be written (the "tiles themselves" target). */
   tileFlags: { pending: number; saving: boolean; onSave: () => void; onDiscard: () => void };
+  /** Blocks every empty cell (of the selection, when `inSelection`) with the whole-cell flag. */
+  onBlockEmpty: () => void;
+  /** Whether there is a selection to limit Block empty cells to. */
+  inSelection: boolean;
   onDone: () => void;
 }
 
@@ -64,7 +73,7 @@ export function WalkLegend({ floating = false }: { floating?: boolean }) {
 }
 
 /** The side panel while the walkability overlay is on: painting sub-tiles blocked or walkable, for this map only. */
-export function WalkPanel({ ds1, lib, scene, revision, hover, onPaint, brush, onChange, busy, canWrite, libraryPath, last, tileFlags, onDone }: Props) {
+export function WalkPanel({ ds1, lib, scene, preset, revision, hover, onPaint, brush, onChange, busy, canWrite, libraryPath, last, tileFlags, onBlockEmpty, inSelection, onDone }: Props) {
   const set = (patch: Partial<WalkBrush>) => onChange({ ...brush, ...patch });
   const [pick, setPick] = useState(false);
   const remembered = useRef<{ ds1: Ds1; x: number; y: number; sub: number } | null>(null);
@@ -74,7 +83,10 @@ export function WalkPanel({ ds1, lib, scene, revision, hover, onPaint, brush, on
     if (x >= 0 && y >= 0 && x < ds1.width && y < ds1.height) remembered.current = { ds1, x, y, sub: (sy % 5) * 5 + sx % 5 };
   }
   const cell = remembered.current?.ds1 === ds1 ? remembered.current : null;
-  const flags = useMemo(() => walkability(ds1, scene, lib), [ds1, scene, lib, revision]);
+  // As the game builds collision: an empty cell is open ground unless FillBlanks puts a blocking blank tile there.
+  const flags = useMemo(() => overlayFlags(ds1, scene, lib, preset), [ds1, scene, lib, preset, revision]);
+  // Open void: empty cells the game leaves (partly) walkable, where monsters can spawn outside the play area.
+  const voidCells = useMemo(() => emptyCells(ds1, undefined, flags).length, [ds1, flags]);
   const paintOne = (k: number) => {
     if (!cell) return;
     const i = cell.y * ds1.width + cell.x;
@@ -107,6 +119,19 @@ export function WalkPanel({ ds1, lib, scene, revision, hover, onPaint, brush, on
             : 'Only this map changes: blockers and tile copies go into its own walkability DT1. A cell whose two floor layers are both used can still be blocked whole (Cell brush) with the map’s whole-cell flag.'}{' '}
           To block whole cells with that flag straight away, no tile file (like WinDS1): <b>Ctrl+Shift+right-click</b> a cell, or select cells and use <b>Make unwalkable</b>.
         </p>
+        {voidCells > 0 && (
+          <div className="imp-callout small">
+            <span>
+              {voidCells} empty cell{voidCells === 1 ? ' has' : 's have'} walkable ground in game:{' '}
+              {preset?.fillBlanks === false ? 'this level doesn’t fill blanks (LvlPrest FillBlanks=0)' : 'the blank tile the level fills them with (floor style 30) doesn’t block every sub-tile'}, so monsters can spawn and walk there.
+            </span>
+            <span className="inline">
+              <button className="btn small primary" disabled={busy} onClick={onBlockEmpty} title="Give every empty cell a hidden floor with the whole-cell unwalkable flag (drawn as nothing). One undo step; save the map to keep it.">
+                Block empty cells{inSelection ? ' (selection)' : ''}
+              </button>
+            </span>
+          </div>
+        )}
         {brush.target === 'tile' && tileFlags.pending > 0 && (
           <div className="imp-callout small">
             <span>

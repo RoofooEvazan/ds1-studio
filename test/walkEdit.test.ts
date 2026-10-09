@@ -46,8 +46,8 @@ const blocked = (d: Ds1, lib: TileLibrary, cell: number) => {
 
 describe('walkability editing (sub-tile by sub-tile, this map only)', () => {
   const mask = (ks: number[]) => ks.reduce((m, k) => m | (1 << k), 0);
-  const plan = (d: Ds1, lib: TileLibrary, walk: Uint8Array | null, paint: WalkPaint) =>
-    planWalkEdit({ ds1: d, lib, read: async (p) => (p === FLOOR ? floorDt1 : p === WALK ? walk : null), walkPath: WALK, walk, paint });
+  const plan = (d: Ds1, lib: TileLibrary, walk: Uint8Array | null, paint: WalkPaint, voidFlags?: Uint8Array) =>
+    planWalkEdit({ ds1: d, lib, read: async (p) => (p === FLOOR ? floorDt1 : p === WALK ? walk : null), walkPath: WALK, walk, paint, voidFlags });
 
   it('blocks sub-tiles with a hidden blocker in a new floor layer, then clears them again', async () => {
     let s = apply(ds1(), { floors: 1, edits: [], dt1: null, changed: 0, skipped: [] }, null);
@@ -94,16 +94,26 @@ describe('walkability editing (sub-tile by sub-tile, this map only)', () => {
     expect(again.edits[0].cell.subIndex).toBe(copySub);
   });
 
-  it('clears part of a cell the DS1 marks unwalkable, and part of an empty cell (blocked because it has no floor)', async () => {
+  it('clears part of a cell the DS1 marks unwalkable, and part of an empty cell a blocking blank tile fills (FillBlanks)', async () => {
     let s = apply(ds1(), { floors: 1, edits: [], dt1: null, changed: 0, skipped: [] }, null);
     expect(blocked(s.d, s.lib, 2)).toHaveLength(25);
     expect(blocked(s.d, s.lib, 3)).toHaveLength(25);
-    const p = await plan(s.d, s.lib, s.walk, { mode: 'clear', bits: 1, cells: new Map([[2, mask([12])], [3, mask([6, 7])]]) });
+    const p = await plan(s.d, s.lib, s.walk, { mode: 'clear', bits: 1, cells: new Map([[2, mask([12])], [3, mask([6, 7])]]) }, new Uint8Array(25).fill(1));
     expect(p.skipped).toEqual([]);
     s = apply(s.d, p, s.walk);
     expect(s.d.floors[0][2].prop3 & 0x02).toBe(0);
     expect(blocked(s.d, s.lib, 2)).toEqual(Array.from({ length: 25 }, (_, k) => k).filter((k) => k !== 12));
     expect(blocked(s.d, s.lib, 3)).toEqual(Array.from({ length: 25 }, (_, k) => k).filter((k) => k !== 6 && k !== 7));
+  });
+
+  it('without FillBlanks, an empty cell is open ground: blocking it adds a hidden blocker, clearing it changes nothing', async () => {
+    const s = apply(ds1(), { floors: 1, edits: [], dt1: null, changed: 0, skipped: [] }, null);
+    const block = await plan(s.d, s.lib, s.walk, { mode: 'block', bits: 1, cells: new Map([[3, 0x1ffffff]]) });
+    expect(block).toMatchObject({ changed: 25, skipped: [] });
+    expect(block.edits).toHaveLength(1);
+    expect(block.edits[0].cell.hidden).toBe(true);
+    const clear = await plan(s.d, s.lib, s.walk, { mode: 'clear', bits: 1, cells: new Map([[3, 0x1ffffff]]) });
+    expect(clear).toMatchObject({ changed: 0, edits: [] });
   });
 
   it('keeps hidden cells hidden when their tile is copied, and says which cells it skipped', async () => {

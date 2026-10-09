@@ -85,7 +85,7 @@ import { loadPresets, presetPath, presetToClipboard, serializePreset, suggestPre
 import { buildPresetPackage, planPresetImport, type PresetImportPlan } from '../game/presetPackage';
 import { layerKey, layerLabel, MapDocument, type Brush, type CellEdit, type LayerRef, type FileHistoryChange } from '../game/MapDocument';
 import { drawnPalettes, guessDrawnAct, openMap, refreshPalette, rememberPalette, setViewPalette, withPalette, type MapOverride, type OpenMap } from '../game/openMap';
-import { buildScene, cellToWorld, hitTest, sameItem, subTileToWorld, tilesAt, worldToSubTile, type DrawItem } from '../render/scene';
+import { blankFillFlags, buildScene, cellToWorld, hitTest, sameItem, subTileToWorld, tilesAt, worldToSubTile, type DrawItem } from '../render/scene';
 import type { SceneLight } from '../render/MapRenderer';
 import { canPickFolders, loadFromDevServer, sourcesFromDirectory } from '../vfs/loaders';
 import { devServerSaveTarget, directorySaveTarget, downloadFile, exportBytes, importMany, importNamed, type SaveTarget } from '../vfs/save';
@@ -169,7 +169,7 @@ import { overlayFlags, spawnLevelOf, spawnOverlay, walkableOverlay, type Overlay
 import { OverviewLegend } from './OverviewLegend';
 import { isBuiltinPath, PLACEABLE_SPECIALS, SPECIAL_TILES_DT1, specialTileInfo } from '../game/specialTiles';
 import { floodRegion, keyOf, objectInRect, paintEdits, rectCells, rerollEdits, stackPaintEdits, type TileKey } from '../game/editTools';
-import { cellUnwalkableEdits, isCellUnwalkable } from '../game/cellFlags';
+import { cellUnwalkableEdits, emptyCells, isCellUnwalkable } from '../game/cellFlags';
 import { addRecentMap, pinnedTiles, recentMaps, recentTiles, reopenLast, setReopenLast, togglePinned, noteTileUse, type RecentMap } from '../app/prefs';
 import { deleteRecovery, getRecovery, listRecoveries, saveRecovery, type Recovery } from '../app/recovery';
 import { renderMapImage } from '../render/exportImage';
@@ -2393,7 +2393,9 @@ export function App() {
       const walkPath = own.path;
       const tooLong = tilePathProblem(walkPath.replace(/^data\/global\/tiles\//i, ''));
       if (tooLong) throw new Error(`the level type's own tile file would be ${tooLong}`);
-      const plan = await planWalkEdit({ ds1: doc.ds1, lib: map.lib, read: (p) => gd.fs.read(p), walkPath, walk: own.existing, paint, extraTaken: own.taken });
+      const preset = map.resolution.preset;
+      const voidFlags = preset?.fillBlanks === false ? null : blankFillFlags(map.lib, preset?.levelId ?? 0);
+      const plan = await planWalkEdit({ ds1: doc.ds1, lib: map.lib, read: (p) => gd.fs.read(p), walkPath, walk: own.existing, paint, extraTaken: own.taken, voidFlags });
       if (currentContext.current.doc !== doc || doc.revision !== expectedRevision) throw new Error('The map changed during the stroke. Please try again.');
       // Safeguard: every cell the stroke changes must use a tile the map's libraries or the new tile file have, before
       // anything is written. Otherwise those cells would show as missing (and have no collision in game).
@@ -4163,7 +4165,8 @@ export function App() {
     const r = cellUnwalkableEdits(doc, cells, on);
     const label = on ? 'Make unwalkable (cell flag)' : 'Make walkable (cell flag)';
     if (r.edits.length && doc.apply(r.edits, label)) bump();
-    const skipped = r.skipped ? ` · ${r.skipped} cell${r.skipped === 1 ? ' has' : 's have'} no tile to hold the flag (put a floor there first)` : '';
+    const filled = r.filled ? ` · ${r.filled} empty cell${r.filled === 1 ? '' : 's'} given a hidden floor to hold it` : '';
+    const skipped = filled + (r.skipped ? ` · ${r.skipped} empty cell${r.skipped === 1 ? '' : 's'} skipped: the map has no floor tile to copy` : '');
     notify(r.cells ? `${r.cells} cell${r.cells === 1 ? '' : 's'} ${on ? 'unwalkable' : 'walkable again'} (cell flag)${skipped}` : `Nothing to change: ${on ? 'already unwalkable' : 'no cell flag here'}${skipped}`, !!r.skipped && !r.cells);
   };
   /** Ctrl+Shift+right-click: toggles the flag on the cell (or the selection it is in), by the cell's current state. */
@@ -4446,13 +4449,15 @@ export function App() {
             {viewMode === 'walk' && (
               <WalkPanel
                 brush={walkBrush}
-                ds1={doc.ds1} lib={map.lib} scene={scene} hover={hover} revision={revision}
+                ds1={doc.ds1} lib={map.lib} scene={scene} preset={map.resolution.preset} hover={hover} revision={revision}
                 onPaint={paint => void applyWalkRef.current?.(paint)}
                 onChange={setWalkBrush}
                 busy={walkBusy}
                 canWrite={canWrite}
                 libraryPath={(gd ? ownTilesPath(gd, map.path, map.resolution.lvlType) : '').replace(/^data\/global\/tiles\//i, '')}
                 tileFlags={{ pending: flagEditCount, saving: savingFlags, onSave: () => void saveTileFlags(), onDiscard: discardTileFlags }}
+                inSelection={!!selection}
+                onBlockEmpty={() => setUnwalkable(emptyCells(doc.ds1, selection ? (x, y) => inSelection(selection, x, y) : undefined, overlayFlags(doc.ds1, scene, map.lib, map.resolution.preset)), true)}
                 last={walkLast}
                 onDone={exitMode}
               />

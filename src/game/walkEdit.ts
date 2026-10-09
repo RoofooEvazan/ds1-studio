@@ -74,6 +74,12 @@ export async function planWalkEdit(opts: {
   paint: WalkPaint;
   /** Tile numbers ("o|main|sub") the level type's other libraries use: new tiles avoid them too (a shared file). */
   extraTaken?: ReadonlySet<string>;
+  /**
+   * What a cell without a floor is in game (file order): with LvlPrest FillBlanks, the flags of the hidden blank tile
+   * the game puts there (blankFillFlags); without, nothing: the game starts every sub-tile free, so an empty cell is
+   * open ground (monsters spawn there) until a tile there blocks it. Null / missing = FillBlanks off.
+   */
+  voidFlags?: Uint8Array | null;
 }): Promise<WalkPlan> {
   const { ds1, lib, paint } = opts;
   const walkKey = normalizePath(opts.walkPath);
@@ -195,7 +201,8 @@ export async function planWalkEdit(opts: {
       for (const c of others) flagsOf(c).forEach((f, j) => (base[j] |= f));
       const wholeFlags = wholeCell.reduce((f, c) => f | (c.cell.prop3 & 2 ? 1 : 0) | (c.cell.prop3 & 1 ? 4 : 0), 0);
       if (wholeFlags) base.forEach((_, j) => (base[j] |= wholeFlags));
-      if (noFloor) base.forEach((_, j) => (base[j] |= 0x01)); // the game fills an empty cell with a hidden blocking floor
+      const voidFlags = opts.voidFlags ?? null;
+      if (noFloor && voidFlags) base.forEach((_, j) => (base[j] |= voidFlags[j])); // FillBlanks: the hidden blank tile's flags
       let want = blocker ? blockerFlags(blocker.cell) : new Uint8Array(25);
       const before = new Uint8Array(25).map((_, j) => base[j] | want[j]);
       const painted = new Uint8Array(25);
@@ -204,14 +211,14 @@ export async function planWalkEdit(opts: {
       const desired = before.map((f, j) => !painted[j] ? f : paint.mode === 'block' ? f | paint.bits : paint.mode === 'clear' ? f & ~clearBits : paint.bits);
       if (same(before, desired)) continue;
       // A new floor must preserve the implicit blocker everywhere not explicitly cleared.
-      if (noFloor) want = want.map((f, j) => f | (paint.mode !== 'block' && painted[j] && (clearBits & 1) ? 0 : 1));
+      // A blocker floor put in an empty cell replaces the game's blank fill there: it keeps the blank tile's flags except
+      // those this stroke clears.
+      if (noFloor && voidFlags) want = want.map((f, j) => f | (paint.mode !== 'block' && painted[j] ? voidFlags[j] & ~clearBits : voidFlags[j]));
 
       if (paint.mode === 'block') {
         want = want.map((f, j) => (painted[j] ? f | (paint.bits & ~base[j]) : f));
       } else {
         want = want.map((f, j) => (painted[j] ? f & ~clearBits : f));
-        // An empty cell is blocked because it has no floor; once a (blocker) floor is there, the rest must stay blocked.
-        if (noFloor && (clearBits & 1)) want = want.map((f, j) => (painted[j] ? f : f | 0x01));
         // DS1 whole-cell flags become per-subtile flags; merge this with any tile copy below.
         const restored = wholeFlags & clearBits;
         for (const c of wholeCell) {
@@ -237,7 +244,8 @@ export async function planWalkEdit(opts: {
 
       // The blocker: added, changed or removed to hold `want`.
       const hasFlags = want.some((f) => f);
-      const needFloor = noFloor && paint.mode !== 'block' && !!(clearBits & 1); // an empty cell made walkable needs a floor there
+      // Clearing flags the blank fill gives an empty cell needs a floor there, holding the rest.
+      const needFloor = noFloor && paint.mode !== 'block' && !!voidFlags?.some((f) => f & clearBits);
       if (blocker) {
         if (!hasFlags && !needFloor && !noFloorBesides(contributors, blocker)) edits.push({ layer: blocker.layer, x, y, cell: EMPTY_CELL });
         else if (!same(want, blockerFlags(blocker.cell))) edits.push({ layer: blocker.layer, x, y, cell: hidden(withTile(blocker.cell, blockMain, blockerFor(want), DEFAULT_PROP1.floor)) });

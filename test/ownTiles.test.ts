@@ -3,7 +3,7 @@ import { parseDt1 } from '../src/formats/dt1';
 import { blockerRecord, buildDt1 } from '../src/formats/dt1Write';
 import { parseTxtTable, getCell } from '../src/formats/txtTable';
 import type { GameData, LvlTypeInfo } from '../src/game/GameData';
-import { appendTiles, keysOf, ownTilesPath, typeHome } from '../src/game/ownTiles';
+import { appendTiles, customName, keysOf, ownTilesPath, typeHome } from '../src/game/ownTiles';
 import { gatheredName, planGatherType } from '../src/game/typePackage';
 import { LayeredFs, LooseSource } from '../src/vfs/vfs';
 
@@ -18,6 +18,11 @@ describe("the level type's own tiles file", () => {
     const gd = fakeGd(['Guilds/floor.dt1', 'Guilds/trees.dt1', 'Other/x.dt1']);
     expect(typeHome(gd, t)).toBe('Guilds');
     expect(ownTilesPath(gd, 'data/global/tiles/expansion/Map/guild1.ds1', t)).toBe('data/global/tiles/Guilds/guild_custom.dt1');
+  });
+  it("stays within the game's 41-character tile path limit", () => {
+    expect(customName('PD2assets/dtprivate', 'dark_temple')).toBe('PD2assets/dtprivate/darktemple_custom.dt1');
+    expect(customName('PD2assets/dtprivate', 'the_longest_level_type_name')).toBe('PD2assets/dtprivate/thelongest_custom.dt1');
+    expect(customName('Guilds', 'guild')).toBe('Guilds/guild_custom.dt1');
   });
   it('keeps the case the level type already lists it with', () => {
     const t = type(['Guilds/floor.dt1', 'Guilds/Guild_Custom.dt1']);

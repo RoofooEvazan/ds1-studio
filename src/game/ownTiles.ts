@@ -3,6 +3,7 @@ import { normalizePath } from '../vfs/vfs';
 import { tileIdentity } from './assetUsage';
 import type { GameData, LvlTypeInfo } from './GameData';
 import { loadedWithPaths } from './reassignTiles';
+import { MAX_TILE_PATH } from './addToGame';
 
 /**
  * Where DS1 Studio puts the tiles it makes for maps (automap pieces, walkability blockers and copies, floor rerolls,
@@ -42,12 +43,22 @@ export function typeHome(gd: GameData, type: LvlTypeInfo): string | null {
   return best?.[0] ?? null;
 }
 
+/**
+ * `<home>/<slug>_custom.dt1`, kept within the game's tile path limit (MAX_TILE_PATH): the slug loses its underscores,
+ * then letters from the end ("PD2assets/dtprivate/dark_temple_custom.dt1" -> ".../darktemple_custom.dt1").
+ */
+export function customName(home: string, name: string): string {
+  const room = MAX_TILE_PATH - `${home}/_custom.dt1`.length;
+  const short = name.length <= room ? name : name.replace(/_/g, '').slice(0, Math.max(1, room));
+  return `${home}/${short}_custom.dt1`;
+}
+
 /** The file the map's generated tiles go into (game path, data/global/tiles/...). */
 export function ownTilesPath(gd: GameData, mapPath: string, type: LvlTypeInfo | null | undefined): string {
   const home = type ? typeHome(gd, type) : null;
   if (type && home) {
     // Keep a file the type already lists, whatever its case.
-    const name = `${home}/${slug(type.name)}_custom.dt1`;
+    const name = customName(home, slug(type.name));
     const listed = type.files.find((f) => f && normalizePath(f) === normalizePath(name));
     return TILES + (listed ?? name);
   }

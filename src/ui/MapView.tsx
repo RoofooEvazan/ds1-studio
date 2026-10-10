@@ -104,8 +104,11 @@ interface Props {
   onCycle: (dir: 1 | -1, world: [number, number]) => void;
   /** Input and label preferences: wheel-zoom and arrow-key speeds (1 = normal), what Shift+wheel does, object names. */
   input?: { zoomSpeed: number; smoothZoom?: boolean; arrowSpeed: number; shiftWheel: 'layers' | 'zoom'; objectLabels: boolean };
-  /** When `signal` changes: zoom a step in (1) or out (-1), or to 100% ('100'), around the middle of the view. */
-  zoomCommand?: { to: 1 | -1 | '100'; signal: number } | null;
+  /**
+   * When `signal` changes: zoom a step in (1) or out (-1), to 100% ('100'), or to exactly 10% ('10': the automap is
+   * drawn a tenth of the map's size, so there one automap pixel is one screen pixel), around the middle of the view.
+   */
+  zoomCommand?: { to: 1 | -1 | '100' | '10'; signal: number } | null;
   /** When `signal` changes, centre the view on this world point (zooming in if far out). */
   centerOn?: { x: number; y: number; signal: number } | null;
   /** Label of a special tile (e.g. where a warp leads); defaults to what the tile is. */
@@ -371,7 +374,7 @@ export function MapView(props: Props) {
     const cam = camera.current;
     const dpr = window.devicePixelRatio || 1;
     const smooth = latest.current.input?.smoothZoom;
-    cam.zoom = z.to === '100' ? (smooth ? dpr : 1) : smooth ? Math.min(Math.max(cam.zoom * (z.to > 0 ? 1.25 : 0.8), 0.05), 8 * dpr) : stepZoom(cam.zoom, z.to);
+    cam.zoom = z.to === '10' ? 1 / AUTOMAP_SCALE : z.to === '100' ? (smooth ? dpr : 1) : smooth ? Math.min(Math.max(cam.zoom * (z.to > 0 ? 1.25 : 0.8), 0.05), 8 * dpr) : stepZoom(cam.zoom, z.to);
     latest.current.onZoom(cam.zoom / dpr);
     dirty.current = true;
   }, [props.zoomCommand?.signal]); // eslint-disable-line react-hooks/exhaustive-deps

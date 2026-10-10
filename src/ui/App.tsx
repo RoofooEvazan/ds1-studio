@@ -355,8 +355,8 @@ export function App() {
   const [fitSignal, setFitSignal] = useState(0);
   /** During an Alt+brush stroke: the layer each cell went on. */
   const stackPlaced = useRef<Map<string, number> | null>(null);
-  const [zoomCommand, setZoomCommand] = useState<{ to: 1 | -1 | '100'; signal: number } | null>(null);
-  const zoomBy = useCallback((to: 1 | -1 | '100') => setZoomCommand((z) => ({ to, signal: (z?.signal ?? 0) + 1 })), []);
+  const [zoomCommand, setZoomCommand] = useState<{ to: 1 | -1 | '100' | '10'; signal: number } | null>(null);
+  const zoomBy = useCallback((to: 1 | -1 | '100' | '10') => setZoomCommand((z) => ({ to, signal: (z?.signal ?? 0) + 1 })), []);
   const [gameView, setGameView] = useState<{ on: boolean; signal: number; center?: [number, number] | null }>({ on: false, signal: 0 });
   /** The game screen size Game view shows (remembered on this computer). */
   const [gameSize, setGameSizeState] = useState<[number, number]>(() => {
@@ -2513,6 +2513,8 @@ export function App() {
     },
     [gd],
   );
+  /** In Automap mode (or with the automap drawn), 100% becomes exactly 10%: one automap pixel per screen pixel. */
+  const automapZoom = viewMode === 'automap' || !!automapView;
 
   // Colours and look-alike references for automap suggestions; game-wide references are built once per level.
   const automapRefCache = useRef(new Map<string, Promise<ReferenceTile[]>>());
@@ -3728,7 +3730,7 @@ export function App() {
       'mode.automap': () => goView('automap'),
       'mode.light': () => goView('light'),
       'mode.roofs': () => goView('roofs'),
-      'view.zoom100': () => zoomBy('100'),
+      'view.zoom100': () => zoomBy(automapZoom ? '10' : '100'),
       'view.zoomIn': () => zoomBy(1),
       'view.zoomOut': () => zoomBy(-1),
     };
@@ -5593,7 +5595,13 @@ export function App() {
               {TOOLS.find((t) => t.id === tool)!.label} · {layerLabel(activeLayer)}
             </span>
             <span>{hover ? `Cell ${hover.cellX}, ${hover.cellY}` : '—'}</span>
-            <button className="link status-zoom" onClick={() => zoomBy('100')} title={`Screen pixels per game pixel. Click (or ${kb['view.zoom100'] || 'a key set in Shortcuts'}) for 100%, where tiles look as sharp as in game.`}>
+            <button
+              className="link status-zoom"
+              onClick={() => zoomBy(automapZoom ? '10' : '100')}
+              title={automapZoom
+                ? `Screen pixels per game pixel. Click (or ${kb['view.zoom100'] || 'a key set in Shortcuts'}) for exactly 10%, where the automap is pixel-perfect: one automap pixel per screen pixel, as in game.`
+                : `Screen pixels per game pixel. Click (or ${kb['view.zoom100'] || 'a key set in Shortcuts'}) for 100%, where tiles look as sharp as in game.`}
+            >
               {formatZoom(zoom * (window.devicePixelRatio || 1))}
             </button>
             <span>

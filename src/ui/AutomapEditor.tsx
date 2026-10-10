@@ -75,12 +75,13 @@ export function AutomapEditor({ map, scene, table, cels, palette, level, onLevel
   const [category, setCategory] = useState<AutomapKind>('walls');
   /** Tile kinds picked one by one (the category's details); empty = the whole category. */
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [details, setDetails] = useState(false);
   /** A part of the category (Left walls, Corners…), or null for all of it. */
   const [sub, setSub] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const lastClicked = useRef<string | null>(null);
+  /** Home in the editor: the preview to exactly 10% (pixel-perfect automap). */
+  const [zoom10, setZoom10] = useState(0);
 
   // A new level starts over.
   useEffect(() => {
@@ -185,7 +186,6 @@ export function AutomapEditor({ map, scene, table, cels, palette, level, onLevel
     setCategory(k);
     setSub(null);
     setSelected(new Set());
-    setDetails(false);
   };
   const clickKind = (g: Group, e: React.MouseEvent) => {
     setSelected((prev) => {
@@ -215,7 +215,18 @@ export function AutomapEditor({ map, scene, table, cels, palette, level, onLevel
 
   return (
     <div className="modal-backdrop">
-      <div className="modal am-editor" role="dialog" aria-label="Automap editor" onKeyDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal am-editor"
+        role="dialog"
+        aria-label="Automap editor"
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === 'Home' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement)) {
+            e.preventDefault();
+            setZoom10((n) => n + 1);
+          }
+        }}
+      >
         <div className="ame-head">
           <div className="modal-title">Automap editor</div>
           <label className="small">
@@ -239,106 +250,117 @@ export function AutomapEditor({ map, scene, table, cels, palette, level, onLevel
           <span className="muted small ame-help">Pick a category on the left: its tiles light up on the preview, and the right side sets how it looks and which piece it draws.</span>
         </div>
         <div className="ame-body">
-          {/* Categories */}
+          {/* Categories: compact tabs, then the chosen one's parts and its tile kinds (most of the room) */}
           <div className="ame-list">
-            <div className="amc-cards">
+            <div className="amc-tabs" role="tablist" aria-label="Automap categories">
               {present.map((k) => {
                 const s = summary.get(k.id)!;
-                const on = category === k.id;
-                const hole = HOLE_KINDS.includes(k.id);
+                const hole = HOLE_KINDS.includes(k.id) && s.none > 0;
                 return (
-                  <div key={k.id} className={`amc-card${on ? ' active' : ''}`}>
-                    <div className="amc-top">
-                    <button className="amc-main" onClick={() => pickCategory(k.id)} title={k.hint}>
-                      <KindIcon kind={k.id} colour={style.kinds[k.id].colour} size={22} />
-                      <span className="amc-text">
-                        <span className="amc-name">{k.label}</span>
-                        <span className="muted small">
-                          {s.tiles} tiles · {s.groups.length} kind{s.groups.length === 1 ? '' : 's'}
-                        </span>
-                        <span className="small">
-                          <span className="ok-text">{s.shown} shown</span>
-                          {s.none > 0 && <span className={hole ? 'amc-hole' : 'muted'}> · {s.none} {hole ? 'missing' : 'not drawn'}</span>}
-                          {s.hidden > 0 && <span className="muted"> · {s.hidden} left off</span>}
-                        </span>
-                      </span>
-                    </button>
-                    <label className="amc-eye" title="Show on the automap (the look only; nothing is written)">
-                      <input type="checkbox" checked={style.kinds[k.id].show} onChange={(e) => onStyle({ ...style, kinds: { ...style.kinds, [k.id]: { ...style.kinds[k.id], show: e.target.checked } } })} />
+                  <button
+                    key={k.id}
+                    role="tab"
+                    aria-selected={category === k.id}
+                    className={`amc-tab${category === k.id ? ' active' : ''}${style.kinds[k.id].show ? '' : ' hidden-kind'}`}
+                    onClick={() => pickCategory(k.id)}
+                    title={`${k.label}: ${s.tiles} tiles · ${s.shown} shown${s.none ? ` · ${s.none} ${HOLE_KINDS.includes(k.id) ? 'missing' : 'not drawn'}` : ''}${s.hidden ? ` · ${s.hidden} left off` : ''}\n${k.hint}`}
+                  >
+                    <KindIcon kind={k.id} colour={style.kinds[k.id].colour} size={20} />
+                    {hole && <span className="amc-tab-dot" aria-label="tiles missing" />}
+                  </button>
+                );
+              })}
+            </div>
+            {(() => {
+              const k = AUTOMAP_KIND_LIST.find((x) => x.id === category)!;
+              const s = summary.get(category)!;
+              const hole = HOLE_KINDS.includes(category);
+              const subs = subsOf(category);
+              return (
+                <div className="amc-info">
+                  <div className="amc-info-head">
+                    <span className="amc-name">{k.label}</span>
+                    <label className="amc-eye small" title="Show on the automap (the look only; nothing is written)">
+                      <input type="checkbox" checked={style.kinds[category].show} onChange={(e) => onStyle({ ...style, kinds: { ...style.kinds, [category]: { ...style.kinds[category], show: e.target.checked } } })} /> Show
                     </label>
+                  </div>
+                  <div className="small">
+                    <span className="muted">
+                      {s.tiles} tiles · {s.groups.length} kind{s.groups.length === 1 ? '' : 's'} ·{' '}
+                    </span>
+                    <span className="ok-text">{s.shown} shown</span>
+                    {s.none > 0 && <span className={hole ? 'amc-hole' : 'muted'}> · {s.none} {hole ? 'missing' : 'not drawn'}</span>}
+                    {s.hidden > 0 && <span className="muted"> · {s.hidden} left off</span>}
+                  </div>
+                  {subs.length > 1 && (
+                    <div className="amc-subs">
+                      {subs.map((sg) => {
+                        const list = s.groups.filter((g) => sg.codes.includes(AUTOMAP_CODES[g.orientation] ?? ''));
+                        const n = list.reduce((a, g) => a + g.cells.length, 0);
+                        const none = list.filter((g) => celsOf(g) === null).reduce((a, g) => a + g.cells.length, 0);
+                        // The piece most of the part's tiles draw now.
+                        const use = new Map<number, number>();
+                        for (const g of list) for (const c of celsOf(g)?.slice(0, 1) ?? []) use.set(c, (use.get(c) ?? 0) + g.cells.length);
+                        const top = [...use].sort((a, b) => b[1] - a[1])[0]?.[0];
+                        return (
+                          <button
+                            key={sg.id}
+                            className={`amc-sub${sub === sg.id ? ' active' : ''}`}
+                            onClick={() => {
+                              setSub(sub === sg.id ? null : sg.id);
+                              setSelected(new Set());
+                            }}
+                            title={`${sg.codes.map((c) => AUTOMAP_CODE_NAMES[c] ?? c).join(', ')}: click to see and replace their pieces (again: the whole category)`}
+                          >
+                            <span className="amc-sub-name">{sg.label}</span>
+                            <span className="muted small">
+                              {n} tiles{none ? <span className={hole ? 'amc-hole' : ''}> · {none} {hole ? 'missing' : 'not drawn'}</span> : null}
+                            </span>
+                            <span className="amc-sub-piece">{top !== undefined ? <CelThumb frame={cels[top]} palette={palette} fit={22} tint={style.colours === 'kind' ? lookOf(style, category, sg.id).colour : undefined} /> : <span className="ame-badge hidden">off</span>}</span>
+                          </button>
+                        );
+                      })}
                     </div>
-                    {on && subsOf(k.id).length > 1 && (
-                      <div className="amc-subs">
-                        {subsOf(k.id).map((sg) => {
-                          const list = s.groups.filter((g) => sg.codes.includes(AUTOMAP_CODES[g.orientation] ?? ''));
-                          const n = list.reduce((a, g) => a + g.cells.length, 0);
-                          const none = list.filter((g) => celsOf(g) === null).reduce((a, g) => a + g.cells.length, 0);
-                          // The piece most of the part's tiles draw now.
-                          const use = new Map<number, number>();
-                          for (const g of list) for (const c of celsOf(g)?.slice(0, 1) ?? []) use.set(c, (use.get(c) ?? 0) + g.cells.length);
-                          const top = [...use].sort((a, b) => b[1] - a[1])[0]?.[0];
-                          return (
-                            <button
-                              key={sg.id}
-                              className={`amc-sub${sub === sg.id ? ' active' : ''}`}
-                              onClick={() => {
-                                setSub(sub === sg.id ? null : sg.id);
-                                setSelected(new Set());
-                              }}
-                              title={`${sg.codes.map((c) => AUTOMAP_CODE_NAMES[c] ?? c).join(', ')}: click to see and replace their pieces`}
-                            >
-                              <span className="amc-sub-name">{sg.label}</span>
-                              <span className="muted small">
-                                {n} tiles{none ? <span className={hole ? 'amc-hole' : ''}> · {none} {hole ? 'missing' : 'not drawn'}</span> : null}
-                              </span>
-                              <span className="amc-sub-piece">{top !== undefined ? <CelThumb frame={cels[top]} palette={palette} fit={26} tint={style.colours === 'kind' ? lookOf(style, k.id, sg.id).colour : undefined} /> : <span className="ame-badge hidden">off</span>}</span>
-                            </button>
-                          );
-                        })}
+                  )}
+                </div>
+              );
+            })()}
+            <div className="field-label amc-kinds-title">
+              {subInfo ? subInfo.label : catLabel}: tile kinds one by one ({catGroups.length})
+            </div>
+            <div className="ame-rows">
+              {catGroups.map((g) => {
+                const c = celsOf(g);
+                const st = statusOf(c);
+                const tile = map.lib.pick(g.orientation, g.style, g.sub, 0);
+                const code = AUTOMAP_CODES[g.orientation];
+                return (
+                  <div key={g.key} className={`ame-row${selected.has(g.key) ? ' selected' : ''}${edits.has(g.key) ? ' changed' : ''}`} onClick={(e) => clickKind(g, e)}>
+                    <div className="ame-tile">{tile ? <Thumb tile={tile} palette={palette} /> : null}</div>
+                    <div className="ame-what">
+                      <div>
+                        <code>{code}</code> <span className="small">{AUTOMAP_CODE_NAMES[code] ?? ''}</span>
+                        {edits.has(g.key) && <span className="small warn-text"> · changed</span>}
                       </div>
-                    )}
+                      <div className="muted small">
+                        style {g.style} · seq {g.sub} · {g.cells.length} on map
+                      </div>
+                    </div>
+                    <div className={`ame-piece ${st}`}>
+                      {st === 'shown' ? (
+                        c!.map((cel, i) => <CelThumb key={i} frame={cels[cel]} palette={palette} fit={40} tint={tint(g.kind)} title={`piece ${cel}`} />)
+                      ) : (
+                        <span className={`ame-badge ${st === 'missing' && !HOLE_KINDS.includes(g.kind) ? 'hidden' : st}`}>{st === 'missing' ? (HOLE_KINDS.includes(g.kind) ? 'missing' : 'not drawn') : 'off'}</span>
+                      )}
+                    </div>
                   </div>
                 );
               })}
             </div>
-            <button className="link small amc-details-toggle" onClick={() => setDetails(!details)}>
-              {details ? '▾' : '▸'} {subInfo ? subInfo.label : catLabel}: tile kinds one by one ({catGroups.length})
-            </button>
-            {details && (
-              <div className="ame-rows">
-                {catGroups.map((g) => {
-                  const c = celsOf(g);
-                  const st = statusOf(c);
-                  const tile = map.lib.pick(g.orientation, g.style, g.sub, 0);
-                  const code = AUTOMAP_CODES[g.orientation];
-                  return (
-                    <div key={g.key} className={`ame-row${selected.has(g.key) ? ' selected' : ''}${edits.has(g.key) ? ' changed' : ''}`} onClick={(e) => clickKind(g, e)}>
-                      <div className="ame-tile">{tile ? <Thumb tile={tile} palette={palette} /> : null}</div>
-                      <div className="ame-what">
-                        <div>
-                          <code>{code}</code> <span className="small">{AUTOMAP_CODE_NAMES[code] ?? ''}</span>
-                          {edits.has(g.key) && <span className="small warn-text"> · changed</span>}
-                        </div>
-                        <div className="muted small">
-                          style {g.style} · seq {g.sub} · {g.cells.length} on map
-                        </div>
-                      </div>
-                      <div className={`ame-piece ${st}`}>
-                        {st === 'shown' ? (
-                          c!.map((cel, i) => <CelThumb key={i} frame={cels[cel]} palette={palette} fit={40} tint={tint(g.kind)} title={`piece ${cel}`} />)
-                        ) : (
-                          <span className={`ame-badge ${st === 'missing' && !HOLE_KINDS.includes(g.kind) ? 'hidden' : st}`}>{st === 'missing' ? (HOLE_KINDS.includes(g.kind) ? 'missing' : 'not drawn') : 'off'}</span>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
 
           {/* Preview: the automap over the map */}
-          <AutomapPreview map={map} scene={scene} groups={groups} celsOf={celsOf} cels={cels} palette={palette} highlight={highlight} style={style} onStyle={onStyle} />
+          <AutomapPreview map={map} scene={scene} groups={groups} celsOf={celsOf} cels={cels} palette={palette} highlight={highlight} style={style} onStyle={onStyle} zoom10={zoom10} />
 
           {/* The category (or the kinds picked in it) */}
           {sel.length ? (
@@ -741,8 +763,70 @@ function PiecePanel({
 }
 
 /**
+ * The box every piece is shown in, in automap pixels around its cell: the cell's diamond is x 0-16, y 24-32; walls rise
+ * up to 24 pixels above it. Pieces are drawn where the game puts them in it (empty space kept, so the side of the cell
+ * a piece sits on shows), the few bigger ones cropped.
+ */
+const PIECE_BOX = { w: 16, h: 32, top: 24 };
+
+/** One piece in the gallery's box, at a whole-number scale (the same for every piece). */
+function PieceTile({ frame, palette, scale, tint }: { frame: SpriteFrame | undefined; palette: Palette; scale: number; tint?: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current;
+    if (!c) return;
+    const { w, h, top } = PIECE_BOX;
+    c.width = w;
+    c.height = h;
+    const ctx = c.getContext('2d')!;
+    const img = ctx.createImageData(w, h);
+    if (frame) {
+      const t = tint ? [1, 3, 5].map((i) => parseInt(tint.slice(i, i + 2), 16)) : null;
+      // As automapCanvas places it: x from the cell's left corner, y from 8 below the cell's top.
+      const x0 = frame.offsetX;
+      const y0 = top + 8 + frame.offsetY;
+      for (let y = 0; y < frame.height; y++)
+        for (let x = 0; x < frame.width; x++) {
+          const p = frame.pixels[y * frame.width + x];
+          const px = x0 + x;
+          const py = y0 + y;
+          if (!p || px < 0 || py < 0 || px >= w || py >= h) continue;
+          img.data.set(t ? [t[0], t[1], t[2], 255] : [palette[p * 4], palette[p * 4 + 1], palette[p * 4 + 2], 255], (py * w + px) * 4);
+        }
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [frame, palette, tint]);
+  return <canvas ref={ref} className="piece-tile" style={{ width: PIECE_BOX.w * scale, height: PIECE_BOX.h * scale }} />;
+}
+
+/** The gallery's settings, remembered in this browser: scale (1x-6x), and whether numbers and names show. */
+interface GalleryLook {
+  scale: number;
+  numbers: boolean;
+  names: boolean;
+}
+const GALLERY_LOOK_KEY = 'ds1studio.automapGallery';
+function loadGalleryLook(): GalleryLook {
+  const fallback = { scale: 3, numbers: true, names: true };
+  try {
+    const v = JSON.parse(localStorage.getItem(GALLERY_LOOK_KEY) ?? 'null');
+    return v && typeof v === 'object' ? { scale: Math.max(1, Math.min(6, Math.round(Number(v.scale) || 3))), numbers: v.numbers !== false, names: v.names !== false } : fallback;
+  } catch {
+    return fallback;
+  }
+}
+function saveGalleryLook(look: GalleryLook) {
+  try {
+    localStorage.setItem(GALLERY_LOOK_KEY, JSON.stringify(look));
+  } catch {
+    // per-viewer convenience only
+  }
+}
+
+/**
  * The MaxiMap pieces to choose from: those this level (or its act) uses for these tile codes, all of the level's or
- * act's, or every piece; with a filter by number or name.
+ * act's, or every piece; with a filter by number or name. Every piece is shown at the same scale (Ctrl+wheel over them
+ * changes it), and the numbers and names can be hidden (the tooltip has them) to fit more in.
  */
 function PieceGallery({
   table,
@@ -768,6 +852,31 @@ function PieceGallery({
 }) {
   const [which, setWhich] = useState<'kind' | 'level' | 'act' | 'all'>(start);
   const [filter, setFilter] = useState('');
+  const [look, setLookRaw] = useState(loadGalleryLook);
+  const setLook = (patch: Partial<GalleryLook>) =>
+    setLookRaw((cur) => {
+      const next = { ...cur, ...patch };
+      saveGalleryLook(next);
+      return next;
+    });
+  const grid = useRef<HTMLDivElement>(null);
+  // Ctrl+wheel over the pieces: a whole step bigger or smaller (a React wheel handler can't stop the page zooming).
+  useEffect(() => {
+    const el = grid.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      if (!e.deltaY) return;
+      setLookRaw((cur) => {
+        const next = { ...cur, scale: Math.max(1, Math.min(6, cur.scale + (e.deltaY < 0 ? 1 : -1))) };
+        saveGalleryLook(next);
+        return next;
+      });
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
   const act = /^(\d)\s/.exec(level)?.[1];
   const { lists, labels } = useMemo(() => {
     const kind = new Set<number>();
@@ -799,18 +908,33 @@ function PieceGallery({
         </select>
         <input className="small-input" placeholder="name or #" value={filter} onChange={(e) => setFilter(e.target.value)} />
       </div>
+      <div className="ame-gallery-tools small piece-look">
+        <span className="segmented" title="Size of every piece (or Ctrl+wheel over the pieces)">
+          {[1, 2, 3, 4, 5, 6].map((k) => (
+            <button key={k} className={look.scale === k ? 'active' : ''} onClick={() => setLook({ scale: k })}>
+              {k}×
+            </button>
+          ))}
+        </span>
+        <label title="Show each piece's number">
+          <input type="checkbox" checked={look.numbers} onChange={(e) => setLook({ numbers: e.target.checked })} /> Numbers
+        </label>
+        <label title="Show each piece's name (from AutoMap.txt)">
+          <input type="checkbox" checked={look.names} onChange={(e) => setLook({ names: e.target.checked })} /> Names
+        </label>
+      </div>
       {which !== 'kind' && lists.kind.size > 0 && <div className="muted amb-hint">Framed (and first): the pieces used for this kind of tile.</div>}
-      <div className="ame-gallery">
+      <div ref={grid} className="ame-gallery piece-grid" style={{ gridTemplateColumns: `repeat(auto-fill, ${PIECE_BOX.w * look.scale + 6}px)` }}>
         {shown.map((c) => (
           <button
             key={c}
-            className={`cel-cell${active?.includes(c) ? ' active' : ''}${which !== 'kind' && lists.kind.has(c) ? ' fits' : ''}`}
+            className={`piece-cell${active?.includes(c) ? ' active' : ''}${which !== 'kind' && lists.kind.has(c) ? ' fits' : ''}`}
             title={`Piece ${c}${labels.get(c) ? ` · ${labels.get(c)}` : ''}${lists.kind.has(c) ? ' · used for this kind of tile' : ''}`}
             onClick={() => onPick(c)}
           >
-            <CelThumb frame={cels[c]} palette={palette} fit={56} tint={tint} />
-            <span className="mono small">{c}</span>
-            <span className="muted tiny">{labels.get(c) ?? ''}</span>
+            <PieceTile frame={cels[c]} palette={palette} scale={look.scale} tint={tint} />
+            {look.numbers && <span className="mono tiny">{c}</span>}
+            {look.names && <span className="muted tiny">{labels.get(c) ?? ''}</span>}
           </button>
         ))}
         {!shown.length && <p className="muted small">No pieces here — try “Every piece”.</p>}
@@ -833,6 +957,7 @@ function AutomapPreview({
   highlight,
   style,
   onStyle,
+  zoom10,
 }: {
   map: OpenMap;
   scene: Scene;
@@ -843,6 +968,8 @@ function AutomapPreview({
   highlight: Set<string>;
   style: AutomapStyle;
   onStyle: (s: AutomapStyle) => void;
+  /** When it changes: zoom to exactly 10% (Home). */
+  zoom10: number;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -890,6 +1017,14 @@ function AutomapPreview({
   }, []);
   const fit = Math.min(size.w / W, size.h / H) * 0.96;
   const v = view ?? { zoom: fit, x: W / 2, y: H / 2 };
+  const dpr = window.devicePixelRatio || 1;
+  // The preview is in automap pixels (a tenth of the map's): one per screen (device) pixel is the map view's 10%.
+  const percent = v.zoom * dpr * 10;
+  const toTenPercent = () => setView({ zoom: 1 / dpr, x: v.x, y: v.y });
+  const firstZoom10 = useRef(zoom10);
+  useEffect(() => {
+    if (zoom10 !== firstZoom10.current) toTenPercent();
+  }, [zoom10]); // eslint-disable-line react-hooks/exhaustive-deps
   const t = mix / 100;
   const mapAlpha = Math.min(1, 2 * (1 - t));
   const amAlpha = Math.min(1, 2 * t);
@@ -904,7 +1039,8 @@ function AutomapPreview({
     ctx.fillStyle = '#050608';
     ctx.fillRect(0, 0, size.w, size.h);
     ctx.save();
-    ctx.translate(size.w / 2 - v.x * v.zoom, size.h / 2 - v.y * v.zoom);
+    // On whole device pixels, so a pixel-perfect zoom stays sharp.
+    ctx.translate(Math.round((size.w / 2 - v.x * v.zoom) * dpr) / dpr, Math.round((size.h / 2 - v.y * v.zoom) * dpr) / dpr);
     ctx.scale(v.zoom, v.zoom);
     // The map (world → automap pixels: a tenth of the size, from the frame's origin), darker the more automap shows.
     if (mapAlpha > 0) {
@@ -982,6 +1118,9 @@ function AutomapPreview({
         <span className="muted">wheel to zoom · drag to pan</span>
         <button className={`btn small${lookOpen ? ' active' : ''}`} onClick={() => setLookOpen(!lookOpen)} title="Colours, opacity, thickness and which categories show">
           Look
+        </button>
+        <button className="btn small" onClick={toTenPercent} title="Zoom to exactly 10% (Home): one automap pixel per screen pixel, as in game">
+          {`${+percent.toFixed(percent < 10 ? 2 : 1)}%`}
         </button>
         <button className="btn small" onClick={() => setView(null)}>
           Fit

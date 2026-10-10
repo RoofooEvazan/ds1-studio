@@ -948,6 +948,19 @@ footer .status-zoom { color: inherit; font: inherit; padding: 0; }
 .amb .btn.primary { align-self: flex-start; }
 
 /* Automap editor by category */
+/* Automap editor, left: category tabs, the category's parts, then its tile kinds filling the rest. */
+.amc-tabs { display: flex; gap: 4px; }
+.amc-tab { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; padding: 7px 0; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.amc-tab:hover { background: var(--panel-2); }
+.amc-tab.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--bg)); }
+.amc-tab.hidden-kind .am-kind-icon { opacity: 0.35; }
+.amc-tab-dot { position: absolute; top: 3px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: #ff8ad8; }
+.amc-info { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.amc-info-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.amc-info .amc-subs { border-top: 1px solid var(--border); margin-top: 3px; padding: 3px 0 0; }
+.amc-info .amc-sub { padding: 2px 4px; grid-template-columns: 1fr auto 26px; border-radius: 4px; }
+.amc-info .amc-eye { padding: 0; border: 0; gap: 4px; }
+.amc-kinds-title { margin: 4px 0 0; }
 .amc-cards { display: flex; flex-direction: column; gap: 6px; }
 .amc-card { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); overflow: hidden; }
 .amc-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
@@ -989,6 +1002,15 @@ footer .status-zoom { color: inherit; font: inherit; padding: 0; }
 .amb > .amb-texture { flex: 1 0 auto; display: flex; flex-direction: column; }
 .amb .ame-gallery { flex: 1 1 0; min-height: 260px; border: 1px solid var(--border); border-radius: var(--radius); padding: 4px; }
 .amb-hint { font-size: 11px; }
+/* Automap pieces: all in the same box at one whole-number scale, packed like a sprite sheet. */
+.piece-grid { gap: 2px; justify-content: start; }
+.piece-cell { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 2px; min-width: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: 2px; color: inherit; cursor: pointer; }
+.piece-cell:hover { border-color: var(--border-2); }
+.piece-cell.active { border-color: var(--info); box-shadow: inset 0 0 0 1px var(--info); }
+.piece-cell.fits { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+.piece-cell .tiny { max-width: 100%; }
+.piece-tile { image-rendering: pixelated; display: block; background: #000; }
+.piece-look .segmented button { padding: 1px 7px; }
 .cel-cell.fits { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
 .amb .ame-actions { position: sticky; bottom: 0; background: var(--panel); padding: 6px 0; z-index: 1; }
 

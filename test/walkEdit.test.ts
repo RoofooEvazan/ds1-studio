@@ -122,11 +122,15 @@ describe('walkability editing (sub-tile by sub-tile, this map only)', () => {
     let s = apply(d, { floors: 1, edits: [], dt1: null, changed: 0, skipped: [] }, null);
     const p = await plan(s.d, s.lib, s.walk, { mode: 'clear', bits: 1, cells: new Map([[1, mask([12])]]) });
     expect(p.edits[0].cell.hidden).toBe(true);
-    // Both floor layers taken by real tiles: no room for a blocker.
+    // Both floor layers taken by real tiles: no room for a blocker, so floor 1 gets a copy with the flag added.
     s = apply(ds1(), { floors: 2, edits: [{ layer: { kind: 'floor', index: 1 }, x: 0, y: 0, cell: withTile(decodeCell(0), 1, 0, 0xc2) }], dt1: null, changed: 0, skipped: [] }, null);
     const full = await plan(s.d, s.lib, s.walk, { mode: 'block', bits: 1, cells: new Map([[0, mask([0])]]) });
-    expect(full.skipped[0]).toMatch(/\(0, 0\): both floor layers are used/);
-    expect(full.edits).toEqual([]);
+    expect(full).toMatchObject({ skipped: [], changed: 1 });
+    expect(full.edits.map((e) => e.layer)).toEqual([{ kind: 'floor', index: 0 }]);
+    s = apply(s.d, full, s.walk);
+    expect(blocked(s.d, s.lib, 0)).toEqual([0]);
+    // The original tile is untouched: other cells using it stay walkable.
+    expect(s.lib.variants(0, 1, 0)[0].subTileFlags.every((f) => f === 0)).toBe(true);
   });
 });
 
@@ -180,12 +184,18 @@ describe('collision regression coverage', () => {
     expect([...flags].filter((_, k) => k !== 12).every(f => f === 5)).toBe(true);
   });
 
-  it('rolls back an entire cell when preserving its unpainted flags needs an unavailable floor slot', async () => {
+  it('keeps the unpainted sub-tiles of a whole-cell flag blocked on a copy of the floor tile when no floor slot is free', async () => {
     const d = ds1(); d.floors[0][1] = { ...d.floors[0][1], prop3: 3 };
     d.floors.push(d.floors[0].map(c => ({ ...c })));
     const lib = new TileLibrary(); lib.add(FLOOR, parseDt1(floorDt1));
     const p = await planWalkEdit({ ds1: d, lib, walk: null, walkPath: WALK, read: async () => floorDt1, paint: { mode: 'clear', bits: 13, cells: new Map([[1, 1 << 12]]) } });
-    expect(p.skipped).toHaveLength(1); expect(p.changed).toBe(0); expect(p.edits).toEqual([]); expect(p.dt1).toBeNull();
+    expect(p.skipped).toEqual([]);
+    const s = apply(d, p, null);
+    // The cell flags are gone; every sub-tile but the painted one is still blocked, now by the copy's own flags.
+    expect([s.d.floors[0][1].prop3 & 3, s.d.floors[1][1].prop3 & 3]).toEqual([0, 0]);
+    const left = blocked(s.d, s.lib, 1);
+    expect(left).not.toContain(12);
+    expect(left).toHaveLength(24);
   });
 });
 
@@ -216,9 +226,25 @@ describe('walkability when a cell has no room, and on the tiles themselves', () 
     expect(blocked(s.d, s.lib, 0)).toHaveLength(25);
   });
 
-  it('still skips part of such a cell, saying what to do instead', async () => {
-    const p = await plan(full(), { mode: 'block', bits: 1, cells: new Map([[0, 1]]) });
-    expect(p.skipped[0]).toMatch(/whole cell/);
+  it('blocks part of such a cell on a copy of its floor tile, and can take the flag off again', async () => {
+    const d = full();
+    const p = await plan(d, { mode: 'block', bits: 1, cells: new Map([[0, 1]]) });
+    expect(p.skipped).toEqual([]);
+    expect(p.edits).toHaveLength(1);
+    expect(p.edits[0]).toMatchObject({ layer: { kind: 'floor', index: 0 } });
+    let s = apply(d, p, null);
+    expect(blocked(s.d, s.lib, 0)).toEqual([0]);
+    const back = await planWalkEdit({ ds1: s.d, lib: s.lib, read: async (q) => (q === FLOOR ? floorDt1 : q === WALK ? s.walk : null), walkPath: WALK, walk: s.walk, paint: { mode: 'clear', bits: 1, cells: new Map([[0, 1]]) } });
+    s = apply(s.d, back, s.walk);
+    expect(blocked(s.d, s.lib, 0)).toEqual([]);
+  });
+
+  it('sets exact flags on part of such a cell (Set exactly) in one copy', async () => {
+    const d = full();
+    const p = await plan(d, { mode: 'replace', bits: 0x05, cells: new Map([[0, 0b11]]) });
+    expect(p.skipped).toEqual([]);
+    const s = apply(d, p, null);
+    expect(blocked(s.d, s.lib, 0)).toEqual([0, 1]);
   });
 
   it('changes the tiles’ own flags, and counts the other cells that use them', () => {

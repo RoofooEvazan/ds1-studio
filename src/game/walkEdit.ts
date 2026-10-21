@@ -137,14 +137,15 @@ export async function planWalkEdit(opts: {
     }
     return sourceBytes.get(key)?.[src.index] ?? null;
   };
-  const forkFor = async (keys: Contributor['keys'], clear: Uint8Array): Promise<number | null> => {
+  /** A copy of the tiles of `keys` (all variants) with `clear[k]` bits removed and `set[k]` bits added per file byte. */
+  const forkFor = async (keys: Contributor['keys'], clear: Uint8Array, set?: Uint8Array): Promise<number | null> => {
     const copies: { o: number; m: number; rec: Dt1Record }[] = [];
     for (const k of keys)
       // TileLibrary inserts each file record at the front; reverse once to preserve weighted artwork choice.
       for (const t of [...lib.variants(k.o, k.m, k.s)].reverse()) {
         const rec = await recordOf(t);
         if (!rec) return null;
-        const flags = recordInfo(rec).flags.map((f, i) => f & ~clear[i]);
+        const flags = recordInfo(rec).flags.map((f, i) => (f & ~clear[i]) | (set?.[i] ?? 0));
         copies.push({ o: k.o, m: k.m, rec: changedRecord(rec, { flags }) });
       }
     if (!copies.length) return null;
@@ -253,12 +254,25 @@ export async function planWalkEdit(opts: {
         const free = ds1.floors.findIndex((l) => isEmptyCell(l[i]));
         const index = free >= 0 ? free : ds1.floors.length < 2 ? ds1.floors.length : -1;
         if (index < 0) {
-          // No room for a blocker: a whole cell blocked for walking and/or sight can use the DS1's own whole-cell flags.
+          // No room for a blocker. A whole cell blocked for walking and/or sight can use the DS1's own whole-cell flags;
+          // anything else goes on a copy of the cell's floor tile (else its first tile) with the flags added.
           const whole = paint.mode === 'block' && (mask & 0x1ffffff) === 0x1ffffff && !(paint.bits & ~0x05) && contributors.length > 0;
-          if (!whole) throw new Error("both floor layers are used, so there's no room for a blocker (paint the whole cell with the Cell brush to block walking or sight with the map's whole-cell flag, or change the tiles themselves)");
-          const c = contributors[0];
-          c.cell = { ...c.cell, prop3: c.cell.prop3 | (paint.bits & 1 ? 2 : 0) | (paint.bits & 4 ? 1 : 0) };
-          edits.push({ layer: c.layer, x, y, cell: c.cell });
+          if (whole) {
+            const c = contributors[0];
+            c.cell = { ...c.cell, prop3: c.cell.prop3 | (paint.bits & 1 ? 2 : 0) | (paint.bits & 4 ? 1 : 0) };
+            edits.push({ layer: c.layer, x, y, cell: c.cell });
+          } else {
+            const host = others.find((c) => c.layer.kind === 'floor') ?? others[0];
+            if (!host) throw new Error("both floor layers are used and there's no tile to carry the flags");
+            // Made from the cell's original tile: the flags this stroke removes go too, then the ones it adds.
+            const clear = new Uint8Array(25).map((_, j) => (paint.mode !== 'block' && painted[j] ? clearBits : 0));
+            const s = await forkFor(host.keys, clear, want);
+            if (s === null) throw new Error(`both floor layers are used, and its ${host.layer.kind} tile couldn't be copied to carry the flags (no free number, or a tile with no file)`);
+            const cell = withFields(host.cell, { sub: s });
+            // This copy replaces whatever this stroke already did to that layer of the cell (a flag cleared, a copy).
+            for (let n = edits.length - 1; n >= startEdits; n--) if (edits[n].layer.kind === host.layer.kind && edits[n].layer.index === host.layer.index) edits.splice(n, 1);
+            edits.push({ layer: host.layer, x, y, cell });
+          }
         } else {
           if (index >= floors) floors = index + 1;
           edits.push({ layer: { kind: 'floor', index }, x, y, cell: hidden(withTile(EMPTY_CELL, blockMain, blockerFor(want), DEFAULT_PROP1.floor)) });

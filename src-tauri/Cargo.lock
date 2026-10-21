@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "ds1-studio"
-version = "0.2.63"
+version = "0.2.64"
 dependencies = [
  "serde",
  "serde_json",

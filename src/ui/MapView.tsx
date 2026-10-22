@@ -224,6 +224,8 @@ export function MapView(props: Props) {
   const overlay = useRef<HTMLCanvasElement>(null);
   const renderer = useRef<MapRenderer | null>(null);
   const atlas = useRef(new TileAtlas());
+  /** Atlas pages the map needed when its atlas was last started afresh (0 = not built since). */
+  const freshPages = useRef(0);
   const camera = useRef<Camera>({ x: 0, y: 0, zoom: 1 });
   /** Arrow keys currently held ('Shift' too while one is). */
   const arrows = useRef(new Set<string>());
@@ -344,6 +346,7 @@ export function MapView(props: Props) {
   // New map: fresh atlas, fit to view. (Re-resolving tiles or switching palettes keeps the same DS1 and camera.)
   useEffect(() => {
     atlas.current = new TileAtlas();
+    freshPages.current = 0;
     fit();
   }, [map.ds1]);
 
@@ -495,6 +498,12 @@ export function MapView(props: Props) {
     const animFloors: NonNullable<typeof built.current>['animFloors'] = [];
     const frameNow = frameRef.current;
     const floorFrameNow = Math.floor(frameNow / 2.5);
+    // Reloaded tile libraries (e.g. after each walkability stroke) bring new tile objects, and the atlas keeps the old
+    // ones: start it afresh once it holds well over what the map needs, before the GPU texture runs out of layers.
+    if (freshPages.current && atlas.current.pages.length > 2 * freshPages.current + 2) {
+      atlas.current = new TileAtlas();
+      freshPages.current = 0;
+    }
     const a = atlas.current;
     const push = (tile: Dt1Tile, x: number, y: number, flags: number) => {
       const e = a.get(tile);
@@ -556,6 +565,7 @@ export function MapView(props: Props) {
       }
     }
     flushObjects(Infinity);
+    if (!freshPages.current) freshPages.current = a.pages.length;
     built.current = { instances, slotIdx, slotItems, slotBase, animObjs, animFloors };
     uploadWithGhosts();
   }, [scene, visibility, tool, sprites, animations, selectedObject, props.selectedObjects, popsInside, !!props.walkBrush, props.objectsRevision]); // eslint-disable-line react-hooks/exhaustive-deps

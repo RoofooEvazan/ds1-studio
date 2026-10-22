@@ -104,7 +104,7 @@ type WallBucket = 'lowerWall' | 'wall' | 'roof' | 'special';
 
 /**
  * Resolves every cell to positioned tiles in draw order, matching WinDS1 and the game:
- * void filler floors, then floors and lower walls row by row back to front, shadows, upright walls back to front, roofs,
+ * void filler floors, lower walls, then floors back to front, shadows, upright walls back to front, roofs,
  * and editor-only special tiles last.
  */
 export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
@@ -174,9 +174,9 @@ export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
     });
   };
 
-  // Floors and lower walls, back to front. Lower walls hang from a floor's edge down into the void, so each diagonal
-  // row draws its floors, then its lower walls: floors further forward (another platform) cover them, like the game.
-  // Void filler floors (one flat colour, like blank.dt1's) go underneath everything first, so they never hide them.
+  // Lower walls, then floors, back to front, like the game: lower walls hang from a floor's edge down into the void,
+  // and every floor covers them, their own cell's floor included (a cell with both shows its floor). Void filler floors
+  // (one flat colour, like blank.dt1's) go underneath everything first, so they never hide them (PD2's Arcane map).
   const floorSeed = (cx: number, cy: number, layer: number) => seedOf(cx, cy, layer);
   const isVoid = (cx: number, cy: number, layer: number, c: Ds1['floors'][number][number]) => {
     const t = lib.pick(Orientation.Floor, c.mainIndex, c.subIndex, floorSeed(cx, cy, layer));
@@ -190,8 +190,7 @@ export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
       if (!isEmptyCell(c) && !c.hidden && isVoid(cx, cy, layer, c)) add('floor', layer, cx, cy, Orientation.Floor, c.mainIndex, c.subIndex, floorSeed(cx, cy, layer));
     }
   });
-  const lower = buckets.lowerWall;
-  let next = 0;
+  addWalls('lowerWall');
   for (let d = 0; d < width + height - 1; d++) {
     for (let cy = Math.max(0, d - width + 1); cy <= Math.min(d, height - 1); cy++) {
       const cx = d - cy;
@@ -199,11 +198,6 @@ export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
         const c = cells[cy * width + cx];
         if (!isEmptyCell(c) && !c.hidden && !isVoid(cx, cy, layer, c)) add('floor', layer, cx, cy, Orientation.Floor, c.mainIndex, c.subIndex, floorSeed(cx, cy, layer));
       });
-    }
-    for (; next < lower.length && lower[next][1] + lower[next][2] === d; next++) {
-      const [layer, cx, cy] = lower[next];
-      const c = ds1.walls[layer][cy * width + cx];
-      add('lowerWall', layer, cx, cy, c.orientation, c.mainIndex, c.subIndex, seedOf(cx, cy, layer + 5));
     }
   }
   addGround('shadow', ds1.shadows, Orientation.Shadow, () => 4);

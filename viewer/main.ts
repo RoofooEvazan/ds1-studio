@@ -77,7 +77,12 @@ async function load() {
   ($('filter') as HTMLInputElement).disabled = false;
   ($('pickMod') as HTMLButtonElement).disabled = false;
   const n = fs.list((p) => p.endsWith('.dt1')).length;
-  status(n ? `${n} DT1s from ${fs.sources.length} sources. Nothing leaves your computer.` : 'No DT1s yet: choose d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod’s .mpq files) or a data folder.');
+  const noPal = !palettes.some(Boolean);
+  status(!n ? 'No DT1s yet: choose d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod’s .mpq files) or a data folder.'
+    : noPal ? `${n} DT1s, shown in grey: the colours are in d2data.mpq, so choose it too (Choose MPQ files, in your Diablo II folder).`
+    : `${n} DT1s from ${fs.sources.length} sources. Nothing leaves your computer.`);
+  // Redraw what's open: the files just added may bring its palette or replace its tiles.
+  if (current) await open(current.path);
 }
 
 function renderList() {
@@ -120,8 +125,10 @@ function paletteFor(path: string): Palette | null {
   const v = ($('pal') as HTMLSelectElement).value;
   if (v === 'act0') return act0;
   if (v !== 'auto') return palettes[Number(v)];
-  return palettes[dt1Act(path) ?? 0] ?? palettes.find(Boolean) ?? null;
+  return palettes[dt1Act(path) ?? 0] ?? palettes.find(Boolean) ?? GREY;
 }
+/** Until a palette is found (they're in d2data.mpq): tiles drawn in grey, by index, so they can still be seen. */
+const GREY: Palette = Uint8Array.from({ length: 1024 }, (_, i) => (i % 4 === 3 ? 255 : Math.round(((i >> 2) / 255) ** 0.8 * 255)));
 
 function renderGrid() {
   if (!current) return;

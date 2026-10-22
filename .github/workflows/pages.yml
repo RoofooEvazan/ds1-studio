@@ -5,7 +5,7 @@ name: Guide site
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/pages.yml']
+    paths: ['docs/**', 'viewer/**', 'src/formats/**', 'src/vfs/**', 'src/game/act0Palette.ts', 'vite.viewer.config.ts', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -23,6 +23,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The DT1 Viewer (/dt1-viewer/): built from the app's own DT1, MPQ and palette code. It ships no game files;
+      # visitors open their own Diablo II folder in the browser.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx vite build --config vite.viewer.config.ts
+
       # The guide expects img/, media/ and posters/ next to it (as when it's published as an artifact).
       - name: Assemble the site
         run: |
@@ -36,6 +45,7 @@ jobs:
           cp docs/media/* _site/media/
           cp docs/guide/posters/* _site/posters/
           cp docs/manual/DS1-Studio-Manual.pdf _site/
+          cp -r dist-viewer _site/dt1-viewer
           touch _site/.nojekyll
 
       - uses: actions/configure-pages@v5

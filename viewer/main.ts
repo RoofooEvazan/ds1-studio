@@ -4,7 +4,8 @@ import { decodeTile, parseDt1, type Dt1Tile } from '../src/formats/dt1';
 import { palettePath, parsePalette, type Palette } from '../src/formats/palette';
 import { dt1Act, loadAct0Palette } from '../src/game/act0Palette';
 import { loadFromDevServer, sourcesFromDirectory } from '../src/vfs/loaders';
-import { LayeredFs, type FileSource } from '../src/vfs/vfs';
+import { BlobAccess } from '../src/util/RandomAccess';
+import { CLASSIC_MPQS, LayeredFs, LooseSource, MpqSource, RELEVANT_EXT, type FileSource } from '../src/vfs/vfs';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const status = (s: string) => ($('status').textContent = s);
@@ -16,6 +17,10 @@ const ORIENT: Record<number, string> = {
 const kindOf = (o: number) => (o === 0 ? 'floor' : o === 13 ? 'shadow' : o === 15 ? 'roof' : o >= 16 ? 'lower' : o === 10 || o === 11 ? 'special' : o === 12 || o === 14 ? 'tree' : 'wall');
 
 let game: FileSource[] = [], mod: FileSource[] = [];
+// Files chosen with the browser's ordinary pickers (they work in C:\Program Files, where Chrome's folder picker
+// refuses "system files"): MPQs by name, and loose files under their data/ path.
+const mpqFiles = new Map<string, File>();
+const looseFiles = new Map<string, File>();
 let fs: LayeredFs | null = null;
 let palettes: (Palette | null)[] = [];
 let act0: Palette | null = null;
@@ -23,19 +28,47 @@ let current: { path: string; tiles: Dt1Tile[] } | null = null;
 let selected = -1;
 
 async function pick(includeModMpqs: boolean): Promise<FileSource[] | null> {
-  if (!('showDirectoryPicker' in window)) { status('This browser cannot open folders. Use Chrome, Edge or Opera.'); return null; }
+  if (!('showDirectoryPicker' in window)) { status('This browser cannot open folders this way: use “Choose MPQ files” instead.'); return null; }
   try {
     const dir = await (window as unknown as { showDirectoryPicker(o: object): Promise<FileSystemDirectoryHandle> }).showDirectoryPicker({ id: includeModMpqs ? 'dt1mod' : 'dt1game', mode: 'read' });
     status(`Reading ${dir.name}…`);
     return await sourcesFromDirectory(dir, includeModMpqs);
   } catch (e) {
-    if ((e as Error).name !== 'AbortError') status(`Couldn't read that folder: ${(e as Error).message}`);
+    if ((e as Error).name === 'AbortError') return null;
+    status(/system files|not allowed|security/i.test((e as Error).message) || (e as Error).name === 'SecurityError'
+      ? 'The browser won’t open that folder (it’s under C:\\Program Files). Use “Choose MPQ files” and select the .mpq files instead.'
+      : `Couldn't read that folder: ${(e as Error).message}`);
     return null;
   }
 }
 
+/** Sources from the files picked with the ordinary pickers: loose data first, mod MPQs next, then the game's own. */
+async function sourcesFromPicked(): Promise<FileSource[]> {
+  const sources: FileSource[] = [];
+  if (looseFiles.size) sources.push(new LooseSource('chosen folder', new Map([...looseFiles].map(([p, f]) => [p, async () => new Uint8Array(await f.arrayBuffer())]))));
+  const names = [...mpqFiles.keys()];
+  const order = [...names.filter((n) => !CLASSIC_MPQS.includes(n)).sort(), ...CLASSIC_MPQS.filter((n) => mpqFiles.has(n))];
+  for (const n of order) {
+    try { sources.push(await MpqSource.open(n, new BlobAccess(mpqFiles.get(n)!))); } catch (e) { status(`${n}: ${(e as Error).message}`); }
+  }
+  return sources;
+}
+
+function addPicked(files: FileList | null) {
+  for (const f of [...(files ?? [])]) {
+    const name = f.name.toLowerCase();
+    if (name.endsWith('.mpq')) { mpqFiles.set(name, f); continue; }
+    // In a chosen folder the file's path tells where it belongs: everything from its "data/" on.
+    const rel = ((f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name).replace(/\\/g, '/');
+    const at = rel.toLowerCase().indexOf('data/');
+    if (at >= 0 && RELEVANT_EXT.test(name)) looseFiles.set(rel.slice(at), f);
+    else if (name.endsWith('.dt1')) looseFiles.set(`data/global/tiles/chosen/${f.name}`, f);
+  }
+}
+
 async function load() {
-  fs = new LayeredFs([...mod, ...game]);
+  const picked = await sourcesFromPicked();
+  fs = new LayeredFs([...mod, ...picked, ...game]);
   palettes = await Promise.all([0, 1, 2, 3, 4].map(async (a) => { const b = await fs!.read(palettePath(a)); return b ? parsePalette(b) : null; }));
   try { act0 = (await loadAct0Palette(fs)).palette; } catch { act0 = null; }
   const sel = $('pal') as HTMLSelectElement;
@@ -43,7 +76,8 @@ async function load() {
   renderList();
   ($('filter') as HTMLInputElement).disabled = false;
   ($('pickMod') as HTMLButtonElement).disabled = false;
-  status(`${fs.list((p) => p.endsWith('.dt1')).length} DT1s from ${[...mod, ...game].length} sources. Nothing leaves your computer.`);
+  const n = fs.list((p) => p.endsWith('.dt1')).length;
+  status(n ? `${n} DT1s from ${fs.sources.length} sources. Nothing leaves your computer.` : 'No DT1s yet: choose d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod’s .mpq files) or a data folder.');
 }
 
 function renderList() {
@@ -138,6 +172,10 @@ function info(t: Dt1Tile, i: number) {
 
 $('pickGame').onclick = async () => { const s = await pick(false); if (s) { game = s; await load(); } };
 $('pickMod').onclick = async () => { const s = await pick(true); if (s) { mod = s; await load(); } };
+const mpqInput = $('mpqInput') as HTMLInputElement, dirInput = $('dirInput') as HTMLInputElement;
+$('pickMpqs').onclick = () => mpqInput.click();
+$('pickDir').onclick = () => dirInput.click();
+for (const input of [mpqInput, dirInput]) input.onchange = async () => { status('Reading…'); addPicked(input.files); input.value = ''; await load(); };
 $('filter').oninput = renderList;
 for (const id of ['kind', 'pal', 'zoom']) $(id).onchange = renderGrid;
 

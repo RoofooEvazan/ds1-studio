@@ -45,15 +45,19 @@
 <body>
 <header>
   <h1>DT1 Viewer</h1>
-  <button id="pickGame">Choose Diablo II folder</button>
-  <button id="pickMod" disabled>Add mod folder (e.g. ProjectD2)</button>
+  <button id="pickMpqs" title="Select d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod's .mpq files, e.g. ProjectD2's pd2*.mpq). Works anywhere, including C:\Program Files.">Choose MPQ files</button>
+  <button id="pickDir" title="A folder of loose files, e.g. a mod's data folder">Choose a data folder</button>
+  <button id="pickGame" title="Chrome, Edge, Opera: open a game folder directly (not possible under C:\Program Files)">Open game folder</button>
+  <button id="pickMod" disabled title="Chrome, Edge, Opera: add a mod folder such as ProjectD2">Add mod folder</button>
+  <input type="file" id="mpqInput" multiple accept=".mpq,.dt1" hidden>
+  <input type="file" id="dirInput" webkitdirectory multiple hidden>
   <span class="status" id="status">Your files stay on your computer: they are read here in the browser, nothing is uploaded.</span>
 </header>
 <main>
   <section id="files"><input id="filter" placeholder="Filter DT1s (e.g. act1, graveyard)" disabled><div id="list"></div></section>
   <section id="view"><div class="empty" id="empty">
-    <p><b>Pick your Diablo II folder</b> (the one with d2data.mpq) to list every DT1 tile library in it. Add a mod folder such as ProjectD2 to see its tiles too: a mod's files win over the game's, as in game.</p>
-    <p>Needs a browser that can open folders (Chrome, Edge, Opera).</p>
+    <p><b>Choose MPQ files</b> and select <b>d2data.mpq</b>, <b>d2exp.mpq</b> and <b>patch_d2.mpq</b> from your Diablo II folder (Ctrl+click to pick several). Add a mod's .mpq files too, such as ProjectD2's <b>pd2data.mpq</b>, <b>pd2assets.mpq</b> and <b>pd2maps.mpq</b>: a mod's tiles win over the game's, as in game.</p>
+    <p>A mod's loose <b>data</b> folder can be added with “Choose a data folder”. Files you pick are only read here in the browser.</p>
   </div><div class="bar" id="bar" hidden>
     <strong id="title"></strong>
     <select id="kind"><option value="">All tiles</option><option value="floor">Floors</option><option value="wall">Walls</option><option value="lower">Lower walls</option><option value="roof">Roofs</option><option value="shadow">Shadows</option><option value="tree">Trees and objects</option><option value="special">Special tiles</option></select>

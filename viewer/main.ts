@@ -24,6 +24,7 @@ const looseFiles = new Map<string, File>();
 let fs: LayeredFs | null = null;
 let palettes: (Palette | null)[] = [];
 let act0: Palette | null = null;
+let act0Usable: boolean[] | null = null;
 let current: { path: string; tiles: Dt1Tile[] } | null = null;
 let selected = -1;
 
@@ -70,7 +71,7 @@ async function load() {
   const picked = await sourcesFromPicked();
   fs = new LayeredFs([...mod, ...picked, ...game]);
   palettes = await Promise.all([0, 1, 2, 3, 4].map(async (a) => { const b = await fs!.read(palettePath(a)); return b ? parsePalette(b) : null; }));
-  try { act0 = (await loadAct0Palette(fs)).palette; } catch { act0 = null; }
+  try { const a0 = await loadAct0Palette(fs); act0 = a0.palette; act0Usable = a0.usable; } catch { act0 = null; act0Usable = null; }
   const sel = $('pal') as HTMLSelectElement;
   sel.innerHTML = '<option value="auto">Palette: its own act</option>' + [0, 1, 2, 3, 4].map((a) => `<option value="${a}"${palettes[a] ? '' : ' disabled'}>Act ${a + 1} palette</option>`).join('') + (act0 ? '<option value="act0">Act 0 (act-safe; magenta = changes by act)</option>' : '');
   renderList();
@@ -79,7 +80,7 @@ async function load() {
   const n = fs.list((p) => p.endsWith('.dt1')).length;
   const noPal = !palettes.some(Boolean);
   status(!n ? 'No DT1s yet: choose d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod’s .mpq files) or a data folder.'
-    : noPal ? `${n} DT1s, shown in grey: the colours are in d2data.mpq, so choose it too (Choose MPQ files, in your Diablo II folder).`
+    : noPal ? `${n} DT1s, in the shared Act 0 colours (act-specific colours grey): for each act's exact colours, also choose d2data.mpq from your Diablo II folder.`
     : `${n} DT1s from ${fs.sources.length} sources. Nothing leaves your computer.`);
   // Redraw what's open: the files just added may bring its palette or replace its tiles.
   if (current) await open(current.path);
@@ -125,9 +126,19 @@ function paletteFor(path: string): Palette | null {
   const v = ($('pal') as HTMLSelectElement).value;
   if (v === 'act0') return act0;
   if (v !== 'auto') return palettes[Number(v)];
-  return palettes[dt1Act(path) ?? 0] ?? palettes.find(Boolean) ?? GREY;
+  return palettes[dt1Act(path) ?? 0] ?? palettes.find(Boolean) ?? stand_in();
 }
-/** Until a palette is found (they're in d2data.mpq): tiles drawn in grey, by index, so they can still be seen. */
+/**
+ * Without the game's palettes (they're in d2data.mpq): the community Act 0 palette, which has the real colour of every
+ * slot that's the same in all acts (225 of them), with the 30 act-specific slots in a neutral grey.
+ */
+function stand_in(): Palette {
+  if (!act0 || !act0Usable) return GREY;
+  const p = act0.slice();
+  for (let i = 1; i < 256; i++) if (!act0Usable[i]) p.set([110, 106, 100, 255], i * 4);
+  return p;
+}
+/** Last resort (offline, no game palette): grey by index. */
 const GREY: Palette = Uint8Array.from({ length: 1024 }, (_, i) => (i % 4 === 3 ? 255 : Math.round(((i >> 2) / 255) ** 0.8 * 255)));
 
 function renderGrid() {
@@ -187,4 +198,4 @@ $('filter').oninput = renderList;
 for (const id of ['kind', 'pal', 'zoom']) $(id).onchange = renderGrid;
 
 // Local development only: the dev server can serve a test installation (absent on the published page).
-void loadFromDevServer().then(async (dev) => { if (dev) { game = dev.sources; await load(); } });
+if (!location.search.includes("nodev")) void loadFromDevServer().then(async (dev) => { if (dev) { game = dev.sources; await load(); } });

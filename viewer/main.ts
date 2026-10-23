@@ -3,6 +3,7 @@
 import { decodeTile, parseDt1, type Dt1Tile } from '../src/formats/dt1';
 import { palettePath, parsePalette, type Palette } from '../src/formats/palette';
 import { dt1Act, loadAct0Palette } from '../src/game/act0Palette';
+import { guessDrawnAct } from '../src/game/openMap';
 import { loadFromDevServer, sourcesFromDirectory } from '../src/vfs/loaders';
 import { BlobAccess } from '../src/util/RandomAccess';
 import { CLASSIC_MPQS, LayeredFs, LooseSource, MpqSource, RELEVANT_EXT, type FileSource } from '../src/vfs/vfs';
@@ -25,7 +26,7 @@ let fs: LayeredFs | null = null;
 let palettes: (Palette | null)[] = [];
 let act0: Palette | null = null;
 let act0Usable: boolean[] | null = null;
-let current: { path: string; tiles: Dt1Tile[] } | null = null;
+let current: { path: string; tiles: Dt1Tile[]; act: number | null; why: string } | null = null;
 let selected = -1;
 
 async function pick(includeModMpqs: boolean): Promise<FileSource[] | null> {
@@ -112,13 +113,18 @@ async function open(path: string) {
   if (!fs) return;
   try {
     const tiles = parseDt1((await fs.read(path))!).tiles;
-    current = { path, tiles };
+    // The act it was drawn for: its folder says (act1-act4, expansion = Act 5), else its art does: the palette its
+    // act-specific pixels blend in best under (DS1 Studio's own test). Wrong-act colours are what look "screwy".
+    let act = dt1Act(path), why = 'from its folder';
+    const pals = palettes.filter(Boolean) as Palette[];
+    if (act === null && pals.length === 5) { act = guessDrawnAct(tiles, pals); why = act === null ? 'too few act colours to tell: Act 1 shown' : 'from its art'; }
+    current = { path, tiles, act, why };
     selected = -1;
     $('empty').hidden = true; $('bar').hidden = false;
     $('title').textContent = path.replace(/^data\/global\/tiles\//, '');
     document.querySelectorAll('.file').forEach((el) => el.classList.toggle('sel', (el as HTMLElement).title.startsWith(path + '\n')));
     renderGrid();
-    $('info').innerHTML = `<h2>${path.split('/').pop()}</h2><dl><dt>Tiles</dt><dd>${tiles.length}</dd><dt>From</dt><dd>${fs.locate(path) ?? '?'}</dd><dt>Path</dt><dd style="word-break:break-all">${path}</dd></dl><p class="status">Click a tile for details.</p>`;
+    $('info').innerHTML = `<h2>${path.split('/').pop()}</h2><dl><dt>Tiles</dt><dd>${tiles.length}</dd><dt>Drawn for</dt><dd>${act === null ? 'Act 1' : `Act ${act + 1}`} <span class="status">(${why})</span></dd><dt>From</dt><dd>${fs.locate(path) ?? '?'}</dd><dt>Path</dt><dd style="word-break:break-all">${path}</dd></dl><p class="status">Click a tile for details.</p>`;
   } catch (e) { status(`${path}: ${(e as Error).message}`); }
 }
 
@@ -126,17 +132,43 @@ function paletteFor(path: string): Palette | null {
   const v = ($('pal') as HTMLSelectElement).value;
   if (v === 'act0') return act0;
   if (v !== 'auto') return palettes[Number(v)];
-  return palettes[dt1Act(path) ?? 0] ?? palettes.find(Boolean) ?? stand_in();
+  const act = current?.path === path ? current.act : dt1Act(path);
+  return palettes[act ?? 0] ?? palettes.find(Boolean) ?? stand_in();
 }
 /**
  * Without the game's palettes (they're in d2data.mpq): the community Act 0 palette, which has the real colour of every
  * slot that's the same in all acts (225 of them), with the 30 act-specific slots in a neutral grey.
  */
+let standIn: Palette | null = null;
 function stand_in(): Palette {
   if (!act0 || !act0Usable) return GREY;
-  const p = act0.slice();
-  for (let i = 1; i < 256; i++) if (!act0Usable[i]) p.set([110, 106, 100, 255], i * 4);
-  return p;
+  if (!standIn) { standIn = act0.slice(); for (let i = 1; i < 256; i++) if (!act0Usable[i]) standIn.set([110, 106, 100, 255], i * 4); }
+  return standIn;
+}
+/**
+ * Without the game's palettes the 30 act-specific colours are unknown: give those pixels the average of the known pixels
+ * around them, so they blend in instead of showing as grey specks (a few passes reach into larger patches).
+ */
+function fillUnknown(px: Uint8Array, w: number, h: number, out: Uint8ClampedArray, known: boolean[]) {
+  let todo: number[] = [];
+  for (let k = 0; k < px.length; k++) if (px[k] && !known[px[k]]) todo.push(k);
+  const done = new Uint8Array(px.length);
+  for (let k = 0; k < px.length; k++) if (px[k] && known[px[k]]) done[k] = 1;
+  for (let pass = 0; pass < 6 && todo.length; pass++) {
+    const next: number[] = [], set: [number, number, number, number][] = [];
+    for (const k of todo) {
+      const x = k % w, y = (k - x) / w;
+      let r = 0, g = 0, b = 0, n = 0;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+        const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const j = ny * w + nx; if (!done[j]) continue;
+        r += out[j * 4]; g += out[j * 4 + 1]; b += out[j * 4 + 2]; n++;
+      }
+      if (n) set.push([k, r / n, g / n, b / n]); else next.push(k);
+    }
+    for (const [k, r, g, b] of set) { out[k * 4] = r; out[k * 4 + 1] = g; out[k * 4 + 2] = b; done[k] = 1; }
+    todo = next;
+  }
 }
 /** Last resort (offline, no game palette): grey by index. */
 const GREY: Palette = Uint8Array.from({ length: 1024 }, (_, i) => (i % 4 === 3 ? 255 : Math.round(((i >> 2) / 255) ** 0.8 * 255)));
@@ -158,10 +190,15 @@ function renderGrid() {
     if (img && img.width && img.height && pal) {
       const c = document.createElement('canvas');
       c.width = img.width; c.height = img.height;
-      c.style.width = `${img.width * zoom}px`; c.style.height = `${img.height * zoom}px`;
+      // 100% = one tile pixel per screen pixel, as in game (Windows display scaling would otherwise stretch tiles by
+      // 1.25 or 1.5 and make every pixel uneven). Hard pixel edges only where each pixel covers whole screen pixels.
+      const scale = zoom / (window.devicePixelRatio || 1);
+      c.style.width = `${img.width * scale}px`; c.style.height = `${img.height * scale}px`;
+      c.style.imageRendering = Number.isInteger(zoom) ? 'pixelated' : 'auto';
       const ctx = c.getContext('2d')!;
       const data = ctx.createImageData(img.width, img.height);
       for (let k = 0; k < img.pixels.length; k++) { const p = img.pixels[k]; if (!p) continue; data.data[k * 4] = pal[p * 4]; data.data[k * 4 + 1] = pal[p * 4 + 1]; data.data[k * 4 + 2] = pal[p * 4 + 2]; data.data[k * 4 + 3] = 255; }
+      if (pal === standIn && act0Usable) fillUnknown(img.pixels, img.width, img.height, data.data, act0Usable);
       ctx.putImageData(data, 0, 0);
       box.append(c);
     } else { const e = document.createElement('div'); e.style.cssText = 'width:40px;height:20px'; box.append(e); }

@@ -80,6 +80,7 @@ async function load() {
   ($('pickMod') as HTMLButtonElement).disabled = false;
   const n = fs.list((p) => p.endsWith('.dt1')).length;
   const noPal = !palettes.some(Boolean);
+  $('warn').hidden = !n || !noPal;
   status(!n ? 'No DT1s yet: choose d2data.mpq, d2exp.mpq and patch_d2.mpq (and a mod’s .mpq files) or a data folder.'
     : noPal ? `${n} DT1s, in the shared Act 0 colours (act-specific colours grey): for each act's exact colours, also choose d2data.mpq from your Diablo II folder.`
     : `${n} DT1s from ${fs.sources.length} sources. Nothing leaves your computer.`);
@@ -117,14 +118,17 @@ async function open(path: string) {
     // act-specific pixels blend in best under (DS1 Studio's own test). Wrong-act colours are what look "screwy".
     let act = dt1Act(path), why = 'from its folder';
     const pals = palettes.filter(Boolean) as Palette[];
-    if (act === null && pals.length === 5) { act = guessDrawnAct(tiles, pals); why = act === null ? 'too few act colours to tell: Act 1 shown' : 'from its art'; }
+    if (act === null) {
+      if (pals.length === 5) { act = guessDrawnAct(tiles, pals); why = act === null ? 'too few act colours to tell: Act 1 shown' : 'from its art'; }
+      else why = 'unknown until d2data.mpq is chosen';
+    }
     current = { path, tiles, act, why };
     selected = -1;
     $('empty').hidden = true; $('bar').hidden = false;
     $('title').textContent = path.replace(/^data\/global\/tiles\//, '');
     document.querySelectorAll('.file').forEach((el) => el.classList.toggle('sel', (el as HTMLElement).title.startsWith(path + '\n')));
     renderGrid();
-    $('info').innerHTML = `<h2>${path.split('/').pop()}</h2><dl><dt>Tiles</dt><dd>${tiles.length}</dd><dt>Drawn for</dt><dd>${act === null ? 'Act 1' : `Act ${act + 1}`} <span class="status">(${why})</span></dd><dt>From</dt><dd>${fs.locate(path) ?? '?'}</dd><dt>Path</dt><dd style="word-break:break-all">${path}</dd></dl><p class="status">Click a tile for details.</p>`;
+    $('info').innerHTML = `<h2>${path.split('/').pop()}</h2><dl><dt>Tiles</dt><dd>${tiles.length}</dd><dt>Drawn for</dt><dd>${act === null ? (pals.length === 5 ? 'Act 1' : '?') : `Act ${act + 1}`} <span class="status">(${why})</span></dd><dt>From</dt><dd>${fs.locate(path) ?? '?'}</dd><dt>Path</dt><dd style="word-break:break-all">${path}</dd></dl><p class="status">Click a tile for details.</p>`;
   } catch (e) { status(`${path}: ${(e as Error).message}`); }
 }
 

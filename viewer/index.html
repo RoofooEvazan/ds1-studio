@@ -53,6 +53,11 @@
   <input type="file" id="dirInput" webkitdirectory multiple hidden>
   <span class="status" id="status">Your files stay on your computer: they are read here in the browser, nothing is uploaded.</span>
 </header>
+<div id="warn" hidden style="background:#3a2c10;color:#f0d9a0;border-bottom:1px solid #6b5220;padding:8px 16px">
+  <b>Colours are approximate.</b> The game's palettes are in <b>d2data.mpq</b>, which is in your Diablo II folder
+  (usually <code>C:\Program Files\Diablo II</code>, not ProjectD2). Click <b>Choose MPQ files</b> and select
+  <b>d2data.mpq</b>, <b>d2exp.mpq</b> and <b>patch_d2.mpq</b>: everything already chosen stays.
+</div>
 <main>
   <section id="files"><input id="filter" placeholder="Filter DT1s (e.g. act1, graveyard)" disabled><div id="list"></div></section>
   <section id="view"><div class="empty" id="empty">

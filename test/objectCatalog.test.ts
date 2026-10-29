@@ -107,3 +107,15 @@ describe.runIf(hasD2)('object catalogue from the game', () => {
     for (const act of acts) expect(act.filter((v) => v > 0).length).toBeGreaterThan(50);
   });
 });
+
+describe('objects without an objects.txt row', () => {
+  it("draws Arcane's tomb signs (row 582) from their own art, whether the row is missing or only <reserved>", () => {
+    const presets = [new Int32Array(OBJECTS_PER_ACT).fill(-1), new Int32Array(OBJECTS_PER_ACT).fill(-1)];
+    presets[1][110] = 582;
+    for (const objects of [null, table([{ Name: '<reserved>', Id: '582', Token: '' }])]) {
+      const e = buildCatalog(presets, { objects, monPreset: null, monStats: null, monStats2: null, superUniques: null }).find((c) => c.act === 2 && c.id === 110)!;
+      expect(e.name).toMatch(/^Tomb signs in Arcane/);
+      expect(e.spec).toMatchObject({ token: '7C', mode: 'NU', cls: 'HTH', parts: { TR: 'LIT' } });
+    }
+  });
+});

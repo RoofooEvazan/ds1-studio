@@ -160,6 +160,15 @@ export function objectRowsByNumber(t: Pick<CatalogTables, 'objects'>): Map<numbe
   return out;
 }
 
+/**
+ * Objects the game's table points at a row objects.txt doesn't have (or has only as "<reserved>"), whose art is in the
+ * game's files anyway: maps place them as decoration (the art is WinDS1's obj.txt's). The game itself creates no
+ * object for them, so the name says so.
+ */
+const ART_WITHOUT_ROW: Record<number, { name: string; spec: SpriteSpec }> = {
+  582: { name: 'Tomb signs in Arcane (no objects.txt row: not in game)', spec: { base: 'Data\\Global\\Objects', token: '7C', mode: 'NU', cls: 'HTH', parts: { TR: 'LIT' } } },
+};
+
 export function buildCatalog(presets: Int32Array[] | null, t: CatalogTables): CatalogEntry[] {
   const out: CatalogEntry[] = [];
   const objByRow = objectRowsByNumber(t);
@@ -167,6 +176,8 @@ export function buildCatalog(presets: Int32Array[] | null, t: CatalogTables): Ca
     ids.forEach((row, id) => {
       if (row <= 0) return; // unused slot (row 0 is objects.txt's "test data" dummy)
       const r = objByRow.get(row);
+      const known = ART_WITHOUT_ROW[row];
+      if (known && (!r || (!r.spec && /reserved/i.test(r.name)))) return void out.push({ act: a + 1, type: 2, id, ...(r ?? {}), name: known.name, spec: known.spec });
       if (!r) return void out.push({ act: a + 1, type: 2, id, name: `Object row ${row} (not in objects.txt)`, spec: null });
       out.push({ act: a + 1, type: 2, id, ...r });
     }),

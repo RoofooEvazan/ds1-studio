@@ -21,8 +21,11 @@ interface Props {
   gd: GameData;
   /** Placed tiles per DT1 path (normalized), to warn before removing a library in use. */
   usage: Map<string, number>;
-  /** `toAct0`: libraries to convert to the Act 0 colours as they are added. */
-  onApply: (paths: string[], opts?: { toAct0: string[] }) => void;
+  /**
+   * `toAct0`: libraries to convert to the Act 0 colours as they are added; `acts`: the act each was drawn for, where
+   * one was chosen in the Colours list (else its folder's, else the one its art fits).
+   */
+  onApply: (paths: string[], opts?: { toAct0: string[]; acts?: Record<string, number> }) => void;
   onClose: () => void;
 }
 
@@ -301,11 +304,34 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
   /** Moving a library in load order: busy, and what went wrong. */
   const [moving, setMoving] = useState(false);
   const [moveError, setMoveError] = useState<string | null>(null);
-  // Colours: the library's own act (from its folder), the map's act, or Act 0 (magenta = colours that change by act).
-  // A map shown in the Act 0 colours (a new map) opens the library in them too.
-  const [palMode, setPalMode] = useState<'own' | 'map' | 'act0'>(map.paletteAct === ACT0_PALETTE ? 'act0' : 'own');
+  // Colours: the library's own act, the map's act, any act chosen by hand, or Act 0 (magenta = colours that change by
+  // act). A map shown in the Act 0 colours (a new map) opens the library in them too.
+  const [palMode, setPalMode] = useState<'own' | 'map' | 'act0' | `${number}`>(map.paletteAct === ACT0_PALETTE ? 'act0' : 'own');
   const [pal, setPal] = useState<{ palette: Palette; note: string } | null>(null);
-  const ownAct = libraryAct(selected);
+  /**
+   * The act a library was drawn for, as chosen in the Colours list (by normalized path). Custom DT1s are often in
+   * folders that don't say, and their art can fool the guess: this is what the Act 0 conversions then use.
+   */
+  const [chosenActs, setChosenActs] = useState<Record<string, number>>({});
+  const [guessedAct, setGuessedAct] = useState<number | null>(null);
+  useEffect(() => {
+    let live = true;
+    setGuessedAct(null);
+    if (selected && libraryAct(selected) === null && dt1) void drawnPalettes(gd).then((pals) => live && setGuessedAct(guessDrawnAct(dt1.tiles, pals)));
+    return () => {
+      live = false;
+    };
+  }, [selected, dt1, gd]);
+  const chosenAct = selected ? chosenActs[normalizePath(selected)] : undefined;
+  // Its act: the one chosen for it, else its folder's, else the one its art fits.
+  const ownAct = chosenAct ?? libraryAct(selected) ?? (guessedAct !== null && guessedAct <= 4 ? guessedAct : null);
+  const ownWhy = chosenAct !== undefined ? 'chosen' : libraryAct(selected) !== null ? 'its folder' : guessedAct !== null ? 'its art' : null;
+  // Opening another library shows it in its own act (the act chosen for it, if any).
+  useEffect(() => setPalMode((m) => (m === 'map' || m === 'act0' ? m : 'own')), [selected]);
+  const choosePalette = (v: string) => {
+    if (/^\d$/.test(v) && selected) setChosenActs((c) => ({ ...c, [normalizePath(selected)]: Number(v) }));
+    setPalMode(/^\d$/.test(v) ? 'own' : (v as typeof palMode));
+  };
   useEffect(() => {
     let live = true;
     const act = palMode === 'own' ? (ownAct ?? map.ds1.act) : map.ds1.act;
@@ -321,7 +347,7 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
     return () => {
       live = false;
     };
-  }, [gd, palMode, ownAct, map]);
+  }, [gd, palMode, ownAct, map]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true;
     setDt1(null);
@@ -490,8 +516,17 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
             )}
             <label className="small dt1l-colours">
               Colours
-              <select value={palMode} onChange={(e) => setPalMode(e.target.value as typeof palMode)}>
-                <option value="own">its act{ownAct !== null ? ` (Act ${ownAct + 1})` : ''}</option>
+              <select
+                value={palMode}
+                onChange={(e) => choosePalette(e.target.value)}
+                title="The act a library was drawn for. Choosing Act 1-5 shows it in that palette and makes it the act its colours are converted from (Act 0 colours), here and when it's added or its tiles are built into a custom DT1."
+              >
+                <option value="own">its act{ownAct !== null ? ` (Act ${ownAct + 1}, ${ownWhy})` : ''}</option>
+                {[0, 1, 2, 3, 4].map((a) => (
+                  <option key={a} value={String(a)}>
+                    drawn for Act {a + 1}
+                  </option>
+                ))}
                 <option value="map">this map&apos;s act (Act {map.ds1.act + 1})</option>
                 <option value="act0">Act 0: show colours that change between acts</option>
               </select>
@@ -526,7 +561,7 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
           </div>
         </div>
         {custom ? (
-          <CustomDt1Panel map={map} gd={gd} picks={picks} setPicks={setPicks} palette={pal?.palette ?? map.palette} onShow={setSelected} onCreate={onCreateCustom} onClose={onClose} addTo={addTo} onStopAdding={() => setAddTo(null)} />
+          <CustomDt1Panel map={map} gd={gd} chosenActs={chosenActs} picks={picks} setPicks={setPicks} palette={pal?.palette ?? map.palette} onShow={setSelected} onCreate={onCreateCustom} onClose={onClose} addTo={addTo} onStopAdding={() => setAddTo(null)} />
         ) : (
           <>
             <div className="dt1l-chosen">
@@ -557,7 +592,7 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
               <button className="btn" onClick={onClose}>
                 Cancel
               </button>
-              <button className="btn primary" disabled={!chosen.length} onClick={() => onApply([...current, ...chosen], { toAct0: toAct0 ? chosen : [] })}>
+              <button className="btn primary" disabled={!chosen.length} onClick={() => onApply([...current, ...chosen], { toAct0: toAct0 ? chosen : [], acts: chosenActs })}>
                 Add {chosen.length || ''} to the map
               </button>
             </div>
@@ -575,6 +610,7 @@ export function Dt1LibraryDialog({ map, gd, usage, onApply, onCreateCustom, onIm
 function CustomDt1Panel({
   map,
   gd,
+  chosenActs,
   picks,
   setPicks,
   palette,
@@ -589,6 +625,8 @@ function CustomDt1Panel({
   onStopAdding?: () => void;
   map: OpenMap;
   gd: GameData;
+  /** The act each library was drawn for, where chosen in the Colours list (by normalized path). */
+  chosenActs: Record<string, number>;
   picks: TilePick[];
   setPicks: (f: (p: TilePick[]) => TilePick[]) => void;
   palette: Palette;
@@ -663,9 +701,9 @@ function CustomDt1Panel({
   // The act a library was drawn for: its folder's, else the one its art fits (classic Act 5 included), else this map's.
   const drawnFor = useMemo(() => {
     const out = new Map<string, number | null>();
-    if (safe) for (const [path, d] of libs) out.set(path, libraryAct(path) ?? guessDrawnAct(d.tiles, safe.palettes));
+    if (safe) for (const [path, d] of libs) out.set(path, chosenActs[normalizePath(path)] ?? libraryAct(path) ?? guessDrawnAct(d.tiles, safe.palettes));
     return out;
-  }, [libs, safe]);
+  }, [libs, safe, chosenActs]);
   const actOf = (dt1: string) => drawnFor.get(dt1) ?? libraryAct(dt1) ?? map.ds1.act;
   const remapFor = actSafe && safe ? (dt1: string) => safe.remaps[actOf(dt1)] : undefined;
   // After conversion the colours are the same in every act: show them in this map's palette.

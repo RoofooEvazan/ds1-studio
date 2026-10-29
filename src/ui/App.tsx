@@ -70,6 +70,7 @@ import {
   History as HistoryIcon,
   Tags,
   Layers as LayersIcon,
+  Waypoints,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ds1FileToDt1Path, EMPTY_CELL, isEmptyCell, parseDs1, withTile, writeDs1, WRITE_VERSION, type Ds1, type Ds1Object, type TileCell, type WallCell } from '../formats/ds1';
@@ -2803,14 +2804,15 @@ export function App() {
    * every act, judged in the act they were drawn for (their folder's, else this map's). Returns the files as written.
    */
   const toAct0 = useCallback(
-    async (files: { path: string; bytes: Uint8Array }[]): Promise<{ files: { path: string; bytes: Uint8Array }[]; converted: string[] }> => {
+    async (files: { path: string; bytes: Uint8Array }[], acts: Record<string, number> = {}): Promise<{ files: { path: string; bytes: Uint8Array }[]; converted: string[] }> => {
       if (!gd || !files.length) return { files, converted: [] };
       const a0 = await loadAct0Palette(gd.fs);
       const converted: string[] = [];
       const out = [];
       for (const f of files) {
-        // Judged in the act it was drawn for: its folder's, else the one its art fits, only then this map's.
-        let act = dt1Act(f.path);
+        // Judged in the act it was drawn for: the one chosen for it, else its folder's, else the one its art fits, only
+        // then this map's.
+        let act: number | null = acts[normalizePath(f.path)] ?? dt1Act(f.path);
         if (act === null) {
           try {
             act = guessDrawnAct(parseDt1(f.bytes).tiles, await drawnPalettes(gd));
@@ -2828,13 +2830,13 @@ export function App() {
   );
   /** Adds tile libraries to the map, converting `convert` (the new ones) to the Act 0 colours in the mod first. */
   const addLibraries = useCallback(
-    async (paths: string[], convert: string[]) => {
+    async (paths: string[], convert: string[], acts: Record<string, number> = {}) => {
       if (!gd) return;
       let converted: string[] = [];
       if (convert.length && data.status === 'ready' && data.saveTarget) {
         try {
           const read = (await Promise.all(convert.map(async (p) => ({ path: gd.fs.exactPath(p) ?? p, bytes: await gd.fs.read(p) })))).filter((f): f is { path: string; bytes: Uint8Array } => !!f.bytes);
-          const r = await toAct0(read);
+          const r = await toAct0(read, acts);
           const writes = r.files.filter((f) => r.converted.includes(f.path));
           if (writes.length) {
             await writeFiles(writes);
@@ -3967,6 +3969,7 @@ export function App() {
               }`,
             },
             { label: 'Markers', icon: <Eye />, onClick: () => setVisibility((v) => ({ ...v, objects: !v.objects })), active: visibility.objects, disabled: noMap, size: 'sm', shortcut: kb['view.markers'], title: 'Object and NPC markers' },
+            { label: 'Paths', icon: <Waypoints />, onClick: () => setVisibility((v) => ({ ...v, paths: !v.paths })), active: visibility.paths, disabled: noMap, size: 'sm', shortcut: kb['view.paths'], title: "NPC patrol paths. Hidden, a selected NPC's path still shows while you edit it" },
             { label: 'As if inside', icon: <EyeOff />, onClick: () => setVisibility((v) => ({ ...v, popsInside: !v.popsInside })), active: visibility.popsInside, disabled: noMap, size: 'sm', shortcut: kb['view.popsInside'], title: 'Hide the roofs of every hide area, as the game does while a player is inside: clicks then reach the floors under them' },
             { label: 'Wall categories…', icon: <BrickWall />, onClick: () => setWallCatsOpen(true), disabled: noMap, size: 'sm', title: 'Which wall tiles count as Upper or Lower walls (the toggles above the map), library by library' },
           ],
@@ -5254,7 +5257,7 @@ export function App() {
           map={map}
           gd={data.gd}
           usage={dt1Usage}
-          onApply={(p, o) => void addLibraries(p, o?.toAct0 ?? [])}
+          onApply={(p, o) => void addLibraries(p, o?.toAct0 ?? [], o?.acts)}
           onMove={canWrite || !map.resolution.preset ? moveLibrary : null}
           onCreateCustom={canWrite ? createCustomDt1 : null}
           onImportFiles={canWrite ? (mode) => void pickImport('dt1', mode) : null}

@@ -22,6 +22,8 @@ const FILTERS: { id: TypeFilter; label: string }[] = [
 const SIZE_KEY = 'ds1studio.objThumbSize';
 /** Object ids per act in the game's DS1 object table (see GameData.objRow). */
 const OBJECTS_PER_ACT = 150;
+/** NPC ids per act in the game's MonPreset tables: a negative NPC id reaches back into earlier acts' by this many. */
+const NPCS_PER_ACT = 60;
 
 /** Thumbnail data URLs (null = no sprite), per GameData, then "palette#:act:type:id". */
 const thumbCache = new WeakMap<GameData, Map<string, Promise<string | null>>>();
@@ -129,7 +131,8 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
 
   // Objects of another act. An id below 150 is read in the map's act table and runs back into earlier acts' (150
   // objects per act), so an Act 5 map places Act 1's object 0 as id -600, as WinDS1 maps do. An id of 150 or more
-  // is an objects.txt row (id - 150), which is how a later act's object is placed.
+  // is an objects.txt row (id - 150), which is how a later act's object is placed. NPCs run back the same way, 60 per
+  // act (Gheed, Act 1's NPC 0, is -240 in an Act 5 map); a later act's NPC can't be reached.
   const [fromAct, setFromAct] = useState(act);
   useEffect(() => setFromAct(act), [act]);
   const shift = (fromAct - act) * OBJECTS_PER_ACT;
@@ -137,8 +140,12 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
     () =>
       gd
         .objectList(fromAct)
-        .filter((o) => fromAct === act || (o.type === 2 && (fromAct < act || o.row !== undefined)))
-        .map((o) => ({ ...o, id: o.type !== 2 || fromAct === act ? o.id : fromAct < act ? o.id + shift : OBJECTS_PER_ACT + o.row!, own: o.id })),
+        .filter((o) => fromAct === act || (o.type === 2 && (fromAct < act || o.row !== undefined)) || (o.type === 1 && fromAct < act && o.id < NPCS_PER_ACT))
+        .map((o) => ({
+          ...o,
+          id: fromAct === act ? o.id : o.type === 1 ? o.id + (fromAct - act) * NPCS_PER_ACT : fromAct < act ? o.id + shift : OBJECTS_PER_ACT + o.row!,
+          own: o.id,
+        })),
     [gd, act, fromAct, shift],
   );
   const items = useMemo(() => {
@@ -160,7 +167,7 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
             </button>
           ))}
         </div>
-        <label className="small og-act" title="Objects of another act, placed with the id that reaches them from this map's act (negative for earlier acts, e.g. -600 for Act 1's object 0 in an Act 5 map; 150 + the objects.txt row for later acts). NPCs only come from the map's own act.">
+        <label className="small og-act" title="Objects of another act, placed with the id that reaches them from this map's act (negative for earlier acts, e.g. -600 for Act 1's object 0 in an Act 5 map; 150 + the objects.txt row for later acts). NPCs come from this act or earlier ones (60 ids per act: Gheed is -240 in an Act 5 map).">
           Act{' '}
           <select value={fromAct} onChange={(e) => setFromAct(Number(e.target.value))}>
             {[0, 1, 2, 3, 4].map((a) => (
@@ -197,7 +204,7 @@ export function ObjectGallery({ gd, act, palette, placing, onPlace }: ObjectGall
             <button
               key={`${o.type}:${o.id}`}
               className={`og-item${active ? ' active' : ''}`}
-              title={`${o.name} · ${o.type === 1 ? 'NPC' : 'object'} ${o.type}/${o.id}${fromAct !== act ? ` (Act ${fromAct + 1} object ${o.own})` : ''}${active ? ' (placing — click the map)' : ''}`}
+              title={`${o.name} · ${o.type === 1 ? 'NPC' : 'object'} ${o.type}/${o.id}${fromAct !== act ? ` (Act ${fromAct + 1} ${o.type === 1 ? 'NPC' : 'object'} ${o.own})` : ''}${active ? ' (placing — click the map)' : ''}`}
               onClick={() => onPlace({ type: o.type, id: o.id })}
             >
               <ObjThumb gd={gd} act={act} type={o.type} id={o.id} name={o.name} palette={palette} />

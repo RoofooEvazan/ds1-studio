@@ -89,7 +89,7 @@ export function ObjectPanel({ objects, selected, nameOf, hasNames, placing, onSe
                 <option value={2}>2 · Object</option>
               </select>
               <span className="muted small">id</span>
-              <Num value={obj.id} min={0} max={9999} onCommit={(id) => update({ id })} />
+              <Num value={obj.id} min={-9999} max={9999} onCommit={(id) => update({ id })} />
             </div>
             <div className="cell-edit">
               <span className="muted small">x</span>
@@ -132,7 +132,7 @@ export function ObjectPanel({ objects, selected, nameOf, hasNames, placing, onSe
             <option value={2}>Object</option>
           </select>
           <span className="muted small">id</span>
-          <Num value={newId} min={0} max={9999} onCommit={setNewId} />
+          <Num value={newId} min={-9999} max={9999} onCommit={setNewId} />
         </div>
         <div className="cell-edit">
           <span className="small">{nameOf(newType, newId)}</span>

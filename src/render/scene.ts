@@ -116,7 +116,7 @@ export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
 
   const add = (kind: DrawKind, layer: number, cx: number, cy: number, orientation: number, main: number, sub: number, seed: number) => {
     const tile = lib.pick(orientation, main, sub, seed);
-    if (kind === 'special') specials.push({ cellX: cx, cellY: cy, orientation, main, sub, drawn: !!tile?.blocks.length });
+    if (isSpecial(orientation)) specials.push({ cellX: cx, cellY: cy, orientation, main, sub, drawn: !!tile?.blocks.length });
     if (!tile) {
       // Main index 30/31 floors are the game's "blank" void filler (act1/outdoors/blank.dt1); absent = draw nothing.
       if (kind !== 'special' && !(orientation === Orientation.Floor && main >= 30)) missing.push({ kind, layer, cellX: cx, cellY: cy, orientation, main, sub });
@@ -152,8 +152,13 @@ export function buildScene(ds1: Ds1, lib: TileLibrary): Scene {
         const c = ds1.walls[layer][cy * width + cx];
         if (isEmptyCell(c)) continue;
         const o = c.orientation;
-        // Hidden tiles are not drawn by the game; special tiles are editor markers and always shown.
-        if (isSpecial(o)) buckets.special.push([layer, cx, cy]);
+        // Hidden tiles are not drawn by the game. Special tiles are editor markers (always shown), except those with art
+        // in a game DT1 (a warp's archway or stairs, lit on mouseover): the game draws them as walls, so they are walls.
+        if (isSpecial(o)) {
+          const t = lib.pick(o, c.mainIndex, c.subIndex, seedOf(cx, cy, layer + 5));
+          const art = !!t?.blocks.length && !lib.sourceOf(t)?.path.startsWith('builtin/');
+          buckets[art && !c.hidden ? 'wall' : 'special'].push([layer, cx, cy]);
+        }
         else if (!c.hidden) buckets[o === Orientation.Roof ? 'roof' : isLowerWall(o) ? 'lowerWall' : 'wall'].push([layer, cx, cy]);
       }
     }

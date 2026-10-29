@@ -20,3 +20,21 @@ describe('scene draw order', () => {
     expect(kinds.slice(2)).toEqual(Array(9).fill('floor'));
   });
 });
+
+describe('special tiles', () => {
+  it("draws a special tile with art in a game DT1 (a warp's archway) as a wall; a marker stays a special tile", () => {
+    const wallRec = blockerRecord(1, 0, new Uint8Array(25));
+    const [base] = parseDt1(buildDt1([wallRec])).tiles;
+    const art = { ...base, orientation: 10, mainIndex: 1, subIndex: 0, blocks: [{ x: 0, y: 0, gridX: 0, gridY: 0, format: 1, data: new Uint8Array(256) }] };
+    const lib = new TileLibrary();
+    lib.add('act2/palace/sub-har.dt1', { version: [7, 6], tiles: [art] });
+    lib.addFallback('builtin/special tiles', { version: [7, 6], tiles: [{ ...base, orientation: 10, mainIndex: 2, subIndex: 0 }] });
+    const d = newDs1({ width: 3, height: 3, act: 1, floorLayers: 1, wallLayers: 1, tagType: 0, files: [] });
+    d.walls[0][0] = { ...withTile(d.walls[0][0], 1, 0, 0x81), orientation: 10 };
+    d.walls[0][1] = { ...withTile(d.walls[0][1], 2, 0, 0x81), orientation: 10 };
+    const scene = buildScene(d, lib);
+    expect(scene.items.find((it) => it.cellX === 0 && it.cellY === 0)?.kind).toBe('wall');
+    expect(scene.items.find((it) => it.cellX === 1 && it.cellY === 0)?.kind).toBe('special');
+    expect(scene.specials.map((s) => [s.cellX, s.main])).toEqual([[0, 1], [1, 2]]);
+  });
+});
